@@ -1,0 +1,276 @@
+"""
+Train LEAD-CNN baseline model
+
+This script trains the LEAD-CNN model on the brain tumor dataset
+with proper data splits and evaluation metrics.
+"""
+import os
+import sys
+import argparse
+import json
+import yaml
+from pathlib import Path
+import numpy as np
+import tensorflow as tf
+from tensorflow import keras
+
+# Add src to path
+sys.path.append(str(Path(__file__).parent.parent))
+
+from models.lead_cnn import create_lead_cnn
+from data.transforms import create_data_generators, get_class_weights
+from utils.seed import set_seed
+from utils.io import save_model, save_history, create_checkpoint_callback, create_tensorboard_callback
+from utils.params import count_parameters, print_model_summary
+
+
+def parse_args():
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(description="Train LEAD-CNN baseline model")
+    parser.add_argument("--config", type=str, default="experiments/baseline_leadcnn.yaml",
+                       help="Path to configuration file")
+    parser.add_argument("--data_dir", type=str, default="data/raw",
+                       help="Path to dataset directory")
+    parser.add_argument("--splits_file", type=str, default="data/splits.json",
+                       help="Path to data splits file")
+    parser.add_argument("--output_dir", type=str, default="outputs",
+                       help="Output directory for models and logs")
+    parser.add_argument("--resume", type=str, default=None,
+                       help="Path to checkpoint to resume from")
+    parser.add_argument("--seed", type=int, default=42,
+                       help="Random seed")
+    
+    return parser.parse_args()
+
+
+def load_config(config_path):
+    """Load configuration from YAML file"""
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    return config
+
+
+def create_model(config):
+    """Create LEAD-CNN model"""
+    model = create_lead_cnn(
+        input_shape=tuple(config['model']['input_shape']),
+        num_classes=config['model']['num_classes'],
+        dropout_rate=config['model']['dropout_rate']
+    )
+    
+    return model
+
+
+def compile_model(model, config):
+    """Compile model with optimizer and loss"""
+    # Optimizer
+    if config['training']['optimizer']['type'] == 'adam':
+        optimizer = keras.optimizers.Adam(
+            learning_rate=config['training']['optimizer']['learning_rate'],
+            beta_1=config['training']['optimizer'].get('beta_1', 0.9),
+            beta_2=config['training']['optimizer'].get('beta_2', 0.999)
+        )
+    elif config['training']['optimizer']['type'] == 'sgd':
+        optimizer = keras.optimizers.SGD(
+            learning_rate=config['training']['optimizer']['learning_rate'],
+            momentum=config['training']['optimizer'].get('momentum', 0.9),
+            nesterov=config['training']['optimizer'].get('nesterov', True)
+        )
+    else:
+        raise ValueError(f"Unknown optimizer: {config['training']['optimizer']['type']}")
+    
+    # Loss function
+    if config['training']['loss'] == 'categorical_crossentropy':
+        loss = keras.losses.CategoricalCrossentropy(
+            label_smoothing=config['training'].get('label_smoothing', 0.0)
+        )
+    else:
+        loss = config['training']['loss']
+    
+    # Metrics
+    metrics = [
+        keras.metrics.CategoricalAccuracy(name='accuracy'),
+        keras.metrics.Precision(name='precision'),
+        keras.metrics.Recall(name='recall'),
+        keras.metrics.AUC(name='auc')
+    ]
+    
+    # Compile model
+    model.model.compile(
+        optimizer=optimizer,
+        loss=loss,
+        metrics=metrics
+    )
+    
+    return model
+
+
+def create_callbacks(config, output_dir):
+    """Create training callbacks"""
+    callbacks = []
+    
+    # Model checkpoint
+    checkpoint_path = Path(output_dir) / "checkpoints" / "lead_cnn_best.h5"
+    checkpoint_callback = create_checkpoint_callback(
+        filepath=checkpoint_path,
+        monitor=config['training']['monitor'],
+        mode=config['training']['monitor_mode'],
+        save_best_only=True,
+        save_weights_only=False
+    )
+    callbacks.append(checkpoint_callback)
+    
+    # Early stopping
+    if config['training'].get('early_stopping', {}).get('enabled', True):
+        early_stopping = keras.callbacks.EarlyStopping(
+            monitor=config['training']['monitor'],
+            mode=config['training']['monitor_mode'],
+            patience=config['training']['early_stopping']['patience'],
+            restore_best_weights=True,
+            verbose=1
+        )
+        callbacks.append(early_stopping)
+    
+    # Learning rate scheduler
+    if config['training'].get('lr_scheduler', {}).get('enabled', False):
+        if config['training']['lr_scheduler']['type'] == 'reduce_on_plateau':
+            lr_scheduler = keras.callbacks.ReduceLROnPlateau(
+                monitor=config['training']['monitor'],
+                mode=config['training']['monitor_mode'],
+                factor=config['training']['lr_scheduler']['factor'],
+                patience=config['training']['lr_scheduler']['patience'],
+                min_lr=config['training']['lr_scheduler']['min_lr'],
+                verbose=1
+            )
+            callbacks.append(lr_scheduler)
+    
+    # TensorBoard
+    if config['training'].get('tensorboard', {}).get('enabled', True):
+        tensorboard_dir = Path(output_dir) / "logs" / "lead_cnn"
+        tensorboard_callback = create_tensorboard_callback(tensorboard_dir)
+        callbacks.append(tensorboard_callback)
+    
+    return callbacks
+
+
+def train_model(model, train_data, val_data, config, callbacks, class_weights=None):
+    """Train the model"""
+    print("Starting training...")
+    print(f"Training samples: {len(train_data) * config['data']['batch_size']}")
+    print(f"Validation samples: {len(val_data) * config['data']['batch_size']}")
+    
+    # Training parameters
+    epochs = config['training']['epochs']
+    batch_size = config['data']['batch_size']
+    
+    # Train model
+    history = model.model.fit(
+        train_data,
+        validation_data=val_data,
+        epochs=epochs,
+        batch_size=batch_size,
+        callbacks=callbacks,
+        class_weight=class_weights,
+        verbose=1
+    )
+    
+    return history
+
+
+def save_results(model, history, config, output_dir):
+    """Save training results"""
+    output_path = Path(output_dir)
+    
+    # Save model
+    model_path = output_path / "checkpoints" / "lead_cnn_final.h5"
+    save_model(model, model_path)
+    
+    # Save history
+    history_path = output_path / "logs" / "lead_cnn_history.json"
+    save_history(history, history_path)
+    
+    # Save model summary
+    summary_path = output_path / "reports" / "leadcnn_summary.txt"
+    save_model_summary(model, summary_path)
+    
+    # Save training config
+    config_path = output_path / "logs" / "lead_cnn_config.yaml"
+    with open(config_path, 'w') as f:
+        yaml.dump(config, f, default_flow_style=False, indent=2)
+    
+    print(f"Results saved to: {output_path}")
+
+
+def main():
+    """Main training function"""
+    args = parse_args()
+    
+    # Set random seed
+    set_seed(args.seed)
+    
+    # Load configuration
+    config = load_config(args.config)
+    print(f"Loaded configuration from: {args.config}")
+    
+    # Create output directory
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Create data generators
+    print("Creating data generators...")
+    datasets = create_data_generators(
+        splits_file=args.splits_file,
+        batch_size=config['data']['batch_size'],
+        image_size=tuple(config['data']['image_size']),
+        augmentation_config=config['data'].get('augmentation', {})
+    )
+    
+    train_data = datasets['train']
+    val_data = datasets['val']
+    test_data = datasets['test']
+    
+    # Get class weights
+    class_weights = None
+    if config['training'].get('use_class_weights', False):
+        class_weights = get_class_weights(args.splits_file)
+    
+    # Create model
+    print("Creating LEAD-CNN model...")
+    model = create_model(config)
+    
+    # Print model info
+    print_model_summary(model.model, show_layers=False, show_parameters=True)
+    
+    # Compile model
+    model = compile_model(model, config)
+    
+    # Create callbacks
+    callbacks = create_callbacks(config, args.output_dir)
+    
+    # Resume from checkpoint if specified
+    if args.resume:
+        print(f"Resuming from checkpoint: {args.resume}")
+        model.load_weights(args.resume)
+    
+    # Train model
+    history = train_model(model, train_data, val_data, config, callbacks, class_weights)
+    
+    # Save results
+    save_results(model, history, config, args.output_dir)
+    
+    # Final evaluation
+    print("\nEvaluating on test set...")
+    test_results = model.model.evaluate(test_data, verbose=1)
+    
+    print(f"Test Results:")
+    print(f"  Loss: {test_results[0]:.4f}")
+    print(f"  Accuracy: {test_results[1]:.4f}")
+    print(f"  Precision: {test_results[2]:.4f}")
+    print(f"  Recall: {test_results[3]:.4f}")
+    print(f"  AUC: {test_results[4]:.4f}")
+    
+    print("Training completed successfully!")
+
+
+if __name__ == "__main__":
+    main()
