@@ -13,6 +13,7 @@ import numpy as np
 from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 import json
+import argparse
 
 
 def plot_model_architecture(model: keras.Model, output_path: str,
@@ -40,9 +41,14 @@ def plot_model_architecture(model: keras.Model, output_path: str,
         )
         print(f"Model architecture saved to: {output_path}")
     except Exception as e:
-        print(f"Error plotting model: {e}")
-        # Fallback to manual plotting
-        plot_model_manual(model, output_path, title, figsize)
+        print(f"Error plotting model with tf.keras.utils.plot_model: {e}")
+        # Fallback to simple matplotlib layer-bar diagram so the pipeline doesn't break
+        try:
+            safe_plot_layers_fallback(model, output_path, title)
+            print(f"Graphviz unavailable; saved fallback diagram to {output_path}")
+        except Exception as e2:
+            print(f"Fallback plotting also failed: {e2}. Using manual plot.")
+            plot_model_manual(model, output_path, title, figsize)
 
 
 def plot_model_manual(model: keras.Model, output_path: str,
@@ -70,7 +76,7 @@ def plot_model_manual(model: keras.Model, output_path: str,
     for i, (layer, y_pos) in enumerate(zip(layers, y_positions)):
         # Layer box
         box = FancyBboxPatch(
-            (0.1, y_pos - 0.03), 0.8, 0.06,
+            xy=(0.1, y_pos - 0.03), width=0.8, height=0.06,
             boxstyle="round,pad=0.01",
             facecolor='lightblue',
             edgecolor='black',
@@ -111,6 +117,28 @@ def plot_model_manual(model: keras.Model, output_path: str,
     
     print(f"Manual model architecture saved to: {output_path}")
 
+def safe_plot_layers_fallback(model: keras.Model, output_path: str,
+                              title: str = "Model Architecture (Fallback)") -> None:
+    """
+    Simpler, robust fallback diagram: horizontal bars with layer names on y-axis.
+    Saves to the same output path to keep pipeline unbroken.
+    """
+    # Always use a safe figsize tuple
+    plt.figure(figsize=(10, 6))
+    layers = [layer.name for layer in model.layers]
+    lengths = list(range(1, len(layers) + 1))
+    y_pos = list(range(len(layers)))
+    plt.barh(y_pos, lengths, color="lightblue", edgecolor="black")
+    plt.yticks(y_pos, layers, fontsize=8)
+    plt.xlabel("Layer order")
+    plt.title(title)
+    plt.gca().invert_yaxis()
+    out_path = Path(output_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=300, bbox_inches='tight')
+    plt.close()
+
 
 def plot_lead_cnn_architecture(output_path: str) -> None:
     """
@@ -119,6 +147,8 @@ def plot_lead_cnn_architecture(output_path: str) -> None:
     Args:
         output_path: Output file path
     """
+    # Ensure safe figsize is a tuple and figure gets created
+    plt.figure(figsize=(10, 6))
     fig, ax = plt.subplots(figsize=(14, 10))
     
     # Define blocks and their positions
@@ -137,8 +167,10 @@ def plot_lead_cnn_architecture(output_path: str) -> None:
     
     # Draw blocks
     for block in blocks:
+        x, y = block["pos"]
+        width, height = block["size"]
         rect = FancyBboxPatch(
-            block["pos"], block["size"],
+            xy=(x, y), width=width, height=height,
             boxstyle="round,pad=0.1",
             facecolor=block["color"],
             edgecolor="black",
@@ -147,8 +179,7 @@ def plot_lead_cnn_architecture(output_path: str) -> None:
         ax.add_patch(rect)
         
         # Add text
-        ax.text(block["pos"][0] + block["size"][0]/2, 
-                block["pos"][1] + block["size"][1]/2,
+        ax.text(x + width/2, y + height/2,
                 block["name"], ha='center', va='center',
                 fontsize=10, fontweight='bold')
     
@@ -180,8 +211,10 @@ def plot_lead_cnn_architecture(output_path: str) -> None:
     
     # Draw DR block components
     for comp in dr_components:
+        x, y = comp["pos"]
+        width, height = comp["size"]
         rect = FancyBboxPatch(
-            comp["pos"], comp["size"],
+            xy=(x, y), width=width, height=height,
             boxstyle="round,pad=0.05",
             facecolor=comp["color"],
             edgecolor="black",
@@ -189,8 +222,7 @@ def plot_lead_cnn_architecture(output_path: str) -> None:
         )
         ax.add_patch(rect)
         
-        ax.text(comp["pos"][0] + comp["size"][0]/2, 
-                comp["pos"][1] + comp["size"][1]/2,
+        ax.text(x + width/2, y + height/2,
                 comp["name"], ha='center', va='center',
                 fontsize=8, fontweight='bold')
     
@@ -231,6 +263,8 @@ def plot_lightnet_architecture(output_path: str) -> None:
     Args:
         output_path: Output file path
     """
+    # Ensure safe figsize is a tuple and figure gets created
+    plt.figure(figsize=(10, 6))
     fig, ax = plt.subplots(figsize=(14, 10))
     
     # Define blocks and their positions
@@ -248,8 +282,10 @@ def plot_lightnet_architecture(output_path: str) -> None:
     
     # Draw blocks
     for block in blocks:
+        x, y = block["pos"]
+        width, height = block["size"]
         rect = FancyBboxPatch(
-            block["pos"], block["size"],
+            xy=(x, y), width=width, height=height,
             boxstyle="round,pad=0.1",
             facecolor=block["color"],
             edgecolor="black",
@@ -258,8 +294,7 @@ def plot_lightnet_architecture(output_path: str) -> None:
         ax.add_patch(rect)
         
         # Add text
-        ax.text(block["pos"][0] + block["size"][0]/2, 
-                block["pos"][1] + block["size"][1]/2,
+        ax.text(x + width/2, y + height/2,
                 block["name"], ha='center', va='center',
                 fontsize=10, fontweight='bold')
     
@@ -292,8 +327,10 @@ def plot_lightnet_architecture(output_path: str) -> None:
     
     # Draw LiteDR block components
     for comp in lite_dr_components:
+        x, y = comp["pos"]
+        width, height = comp["size"]
         rect = FancyBboxPatch(
-            comp["pos"], comp["size"],
+            xy=(x, y), width=width, height=height,
             boxstyle="round,pad=0.05",
             facecolor=comp["color"],
             edgecolor="black",
@@ -301,8 +338,7 @@ def plot_lightnet_architecture(output_path: str) -> None:
         )
         ax.add_patch(rect)
         
-        ax.text(comp["pos"][0] + comp["size"][0]/2, 
-                comp["pos"][1] + comp["size"][1]/2,
+        ax.text(x + width/2, y + height/2,
                 comp["name"], ha='center', va='center',
                 fontsize=8, fontweight='bold')
     
@@ -326,8 +362,10 @@ def plot_lightnet_architecture(output_path: str) -> None:
     ]
     
     for comp in se_components:
+        x, y = comp["pos"]
+        width, height = comp["size"]
         rect = FancyBboxPatch(
-            comp["pos"], comp["size"],
+            xy=(x, y), width=width, height=height,
             boxstyle="round,pad=0.05",
             facecolor=comp["color"],
             edgecolor="black",
@@ -335,8 +373,7 @@ def plot_lightnet_architecture(output_path: str) -> None:
         )
         ax.add_patch(rect)
         
-        ax.text(comp["pos"][0] + comp["size"][0]/2, 
-                comp["pos"][1] + comp["size"][1]/2,
+        ax.text(x + width/2, y + height/2,
                 comp["name"], ha='center', va='center',
                 fontsize=7, fontweight='bold')
     
@@ -417,21 +454,42 @@ def create_architecture_comparison(output_dir: str) -> None:
     print(f"Architecture comparison saved to: {output_path}")
 
 
+def main():
+    parser = argparse.ArgumentParser(description="Plot model architectures and blocks.")
+    parser.add_argument("--model", choices=["leadcnn", "lightnet"], help="Model to plot")
+    parser.add_argument("--block", choices=["litedr"], help="Specific block diagram to plot")
+    parser.add_argument("--out", required=True, help="Output image path")
+    parser.add_argument("--version", default="v1", choices=["v1", "v2"], help="LightNet version")
+    args = parser.parse_args()
+    
+    out_path = args.out
+    
+    # If a specific block is requested
+    if args.block:
+        if args.block == "litedr":
+            plot_lightnet_architecture(out_path)
+            return
+    
+    if args.model:
+        if args.model == "leadcnn":
+            try:
+                from src.models.lead_cnn import create_lead_cnn
+            except ImportError:
+                from models.lead_cnn import create_lead_cnn
+            model = create_lead_cnn().model
+            plot_model_architecture(model, out_path, title="LEAD-CNN Architecture")
+        elif args.model == "lightnet":
+            try:
+                from src.models.lightnet import create_lightnet
+            except ImportError:
+                from models.lightnet import create_lightnet
+            model = create_lightnet(version=args.version).model
+            plot_model_architecture(model, out_path, title=f"LightNet {args.version.upper()} Architecture")
+        return
+    
+    # Default behavior: generate LEAD-CNN overview
+    plot_lead_cnn_architecture(out_path)
+
+
 if __name__ == "__main__":
-    # Test architecture plotting
-    print("Testing architecture plotting...")
-    
-    # Create dummy model
-    model = keras.Sequential([
-        keras.layers.Conv2D(32, 3, activation='relu', input_shape=(224, 224, 3)),
-        keras.layers.Conv2D(64, 3, activation='relu'),
-        keras.layers.GlobalAveragePooling2D(),
-        keras.layers.Dense(4, activation='softmax')
-    ])
-    
-    # Test plotting
-    plot_model_architecture(model, "test_architecture.png")
-    plot_lead_cnn_architecture("test_lead_cnn.png")
-    plot_lightnet_architecture("test_lightnet.png")
-    
-    print("Architecture plotting test completed!")
+    main()

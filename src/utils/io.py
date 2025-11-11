@@ -219,8 +219,13 @@ def save_model_summary(model: tf.keras.Model,
     filepath = Path(filepath)
     ensure_dir(filepath.parent)
     
+    # Handle both regular models and wrapped models
+    model_to_summarize = model
+    if hasattr(model, 'model'):
+        model_to_summarize = model.model
+    
     with open(filepath, 'w') as f:
-        model.summary(print_fn=lambda x: f.write(x + '\n'))
+        model_to_summarize.summary(print_fn=lambda x: f.write(x + '\n'))
 
 
 def get_model_info(model: tf.keras.Model) -> Dict[str, Any]:

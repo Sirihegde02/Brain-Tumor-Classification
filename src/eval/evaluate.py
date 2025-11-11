@@ -10,6 +10,7 @@ import argparse
 import json
 import yaml
 from pathlib import Path
+from typing import List
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
@@ -22,7 +23,7 @@ from models.lead_cnn import create_lead_cnn
 from models.lightnet import create_lightnet
 from data.transforms import create_data_generators
 from eval.metrics import ClassificationMetrics, evaluate_model, compare_models, create_comparison_table
-from eval.confusion import plot_confusion_matrix, analyze_confusion_matrix, save_confusion_analysis
+from eval.confusion import plot_confusion_matrix, analyze_confusion_matrix, save_confusion_analysis, plot_multiple_confusion_matrices
 from viz.gradcam import generate_gradcam_visualizations
 
 

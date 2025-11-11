@@ -24,39 +24,68 @@ def collect_image_paths(data_dir="data/raw"):
     """
     data_path = Path(data_dir)
     
-    # Define class mapping
-    class_mapping = {
-        "glioma": 0,
-        "meningioma": 1, 
-        "pituitary": 2,
-        "no_tumor": 3
+    # Define class mapping (accept both spellings and normalize to no_tumor)
+    normalized_classes = ["glioma", "meningioma", "pituitary", "no_tumor"]
+    alias_to_normalized = {
+        "glioma": "glioma",
+        "meningioma": "meningioma",
+        "pituitary": "pituitary",
+        "no_tumor": "no_tumor",
+        "notumor": "no_tumor"
     }
+    class_mapping = {name: idx for idx, name in enumerate(normalized_classes)}
     
     image_paths = []
     labels = []
-    class_names = list(class_mapping.keys())
+    class_names = normalized_classes[:]
     
     print("Collecting image paths...")
-    
-    for class_name, class_id in class_mapping.items():
-        class_dir = data_path / class_name
-        if not class_dir.exists():
-            print(f"Warning: Class directory {class_dir} not found")
-            continue
+
+    # Detect Kaggle nested layout (Training/ and Testing/ under data_dir)
+    nested_training = data_path / "Training"
+    nested_testing = data_path / "Testing"
+    use_nested = nested_training.exists() and nested_testing.exists()
+
+    if use_nested:
+        print("Detected Kaggle nested layout (Training/ and Testing/). Combining all images before stratification.")
+        per_class_counts = {}
+        for alias, norm_name in alias_to_normalized.items():
+            # Aggregate from both Training and Testing for each alias spellings
+            for split_dir in [nested_training, nested_testing]:
+                class_dir = split_dir / alias
+                if not class_dir.exists():
+                    continue
+                image_files = []
+                for ext in ["*.jpg", "*.jpeg", "*.png", "*.bmp"]:
+                    image_files.extend(class_dir.glob(ext))
+                for img_path in image_files:
+                    image_paths.append(str(img_path.relative_to(Path.cwd())))
+                    labels.append(class_mapping[norm_name])
+                    per_class_counts[norm_name] = per_class_counts.get(norm_name, 0) + 1
+        # Print summary per normalized class
+        for norm_name in class_names:
+            print(f"Found {per_class_counts.get(norm_name, 0)} images in {norm_name}")
+    else:
+        # Flat layout: data_dir/<class>/*
+        for alias, norm_name in alias_to_normalized.items():
+            class_dir = data_path / alias
+            if not class_dir.exists():
+                continue
+            # Get all image files
+            image_files = []
+            for ext in ["*.jpg", "*.jpeg", "*.png", "*.bmp"]:
+                image_files.extend(class_dir.glob(ext))
             
-        # Get all image files
-        image_files = []
-        for ext in ["*.jpg", "*.jpeg", "*.png", "*.bmp"]:
-            image_files.extend(class_dir.glob(ext))
-        
-        print(f"Found {len(image_files)} images in {class_name}")
-        
-        for img_path in image_files:
-            image_paths.append(str(img_path.relative_to(Path.cwd())))
-            labels.append(class_id)
+            print(f"Found {len(image_files)} images in {norm_name} (from '{alias}')")
+            
+            for img_path in image_files:
+                image_paths.append(str(img_path.relative_to(Path.cwd())))
+                labels.append(class_mapping[norm_name])
     
     print(f"Total images collected: {len(image_paths)}")
     print(f"Class distribution: {Counter(labels)}")
+    if len(image_paths) == 0:
+        print("No images found! Please verify your --data_dir path and layout.")
     
     return image_paths, labels, class_names
 

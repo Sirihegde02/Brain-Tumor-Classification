@@ -6,6 +6,27 @@ import numpy as np
 from typing import Tuple, Optional, Dict, Any
 
 
+def preprocess_tensor(x, augment=False, target_size=(224, 224)):
+    """
+    Takes a float32 tensor in [0,1], resizes, optional augment, returns (img, label_dummy).
+    
+    Args:
+        x: Input tensor in [0, 1] range
+        augment: Whether to apply augmentation
+        target_size: Target image size (height, width)
+        
+    Returns:
+        Tuple of (processed_image, dummy_label)
+    """
+    x = tf.image.resize(x, target_size)
+    
+    if augment:
+        x = tf.image.random_flip_left_right(x)
+        x = tf.image.random_flip_up_down(x)
+    
+    return x, -1
+
+
 class BrainTumorTransforms:
     """
     Data augmentation and preprocessing transforms for brain tumor MRI images
@@ -43,27 +64,37 @@ class BrainTumorTransforms:
         if augmentation_config:
             self.aug_config.update(augmentation_config)
     
-    def preprocess_image(self, image_path: str, label: int) -> Tuple[tf.Tensor, tf.Tensor]:
+    def preprocess_image(self, image_path: str, label: int, allow_dummy: bool = False) -> Tuple[tf.Tensor, tf.Tensor]:
         """
         Load and preprocess a single image
         
         Args:
             image_path: Path to image file
             label: Image label
+            allow_dummy: If True and file doesn't exist, create dummy image
             
         Returns:
             Tuple of (processed_image, label)
         """
-        # Load image
-        image = tf.io.read_file(image_path)
-        image = tf.image.decode_jpeg(image, channels=3)
-        image = tf.cast(image, tf.float32)
+        # Check if file exists
+        file_exists = tf.io.gfile.exists(image_path)
         
-        # Resize
-        image = tf.image.resize(image, self.image_size)
-        
-        # Normalize to [0, 1]
-        image = image / 255.0
+        # If file doesn't exist and allow_dummy is True, create dummy image
+        if not file_exists and allow_dummy:
+            image = tf.random.uniform((224, 224, 3), 0, 1, dtype=tf.float32)
+            # Resize to target size (in case self.image_size is different)
+            image = tf.image.resize(image, self.image_size)
+        else:
+            # Load image
+            image = tf.io.read_file(image_path)
+            image = tf.image.decode_jpeg(image, channels=3)
+            image = tf.cast(image, tf.float32)
+            
+            # Resize
+            image = tf.image.resize(image, self.image_size)
+            
+            # Normalize to [0, 1]
+            image = image / 255.0
         
         # Apply augmentation if enabled
         if self.augment:
