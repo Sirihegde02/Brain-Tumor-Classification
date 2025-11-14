@@ -77,10 +77,11 @@ def main():
         augment=True
     )
     
-    # Test preprocessing
-    test_image = tf.random.normal((224, 224, 3))
-    processed_image, _ = transforms.preprocess_image("dummy_path", 0)
-    print(f"Processed image shape: {processed_image.shape}")
+    # Test preprocessing with tensor helper
+    from data.transforms import preprocess_tensor
+    dummy = tf.random.uniform((224, 224, 3), 0, 1, dtype=tf.float32)
+    processed_image, _ = preprocess_tensor(dummy, augment=True)
+    print(f"Transform smoke test OK: {processed_image.shape}, {processed_image.dtype}")
     
     # 5. Test evaluation metrics
     print("\n5. Testing evaluation metrics...")

@@ -8,7 +8,7 @@ model:
   version: "v1"  # "v1" or "v2"
   dropout_rate: 0.3
   use_se: true
-  channel_multiplier: 1.0
+  channel_multiplier: 0.75
 
 # Data configuration
 data:

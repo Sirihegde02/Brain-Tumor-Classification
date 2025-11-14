@@ -64,43 +64,32 @@ class BrainTumorTransforms:
         if augmentation_config:
             self.aug_config.update(augmentation_config)
     
-    def preprocess_image(self, image_path: str, label: int, allow_dummy: bool = False) -> Tuple[tf.Tensor, tf.Tensor]:
+    def preprocess_image(self, image_path: str, label: int) -> Tuple[tf.Tensor, tf.Tensor]:
         """
         Load and preprocess a single image
         
         Args:
-            image_path: Path to image file
+            image_path: Path to image file (tf.Tensor in tf.data pipeline)
             label: Image label
-            allow_dummy: If True and file doesn't exist, create dummy image
             
         Returns:
             Tuple of (processed_image, label)
         """
-        # Check if file exists
-        file_exists = tf.io.gfile.exists(image_path)
+        # Read image file directly (no existence check - tf.data handles missing files)
+        image = tf.io.read_file(image_path)
+        image = tf.image.decode_jpeg(image, channels=3)
         
-        # If file doesn't exist and allow_dummy is True, create dummy image
-        if not file_exists and allow_dummy:
-            image = tf.random.uniform((224, 224, 3), 0, 1, dtype=tf.float32)
-            # Resize to target size (in case self.image_size is different)
-            image = tf.image.resize(image, self.image_size)
-        else:
-            # Load image
-            image = tf.io.read_file(image_path)
-            image = tf.image.decode_jpeg(image, channels=3)
-            image = tf.cast(image, tf.float32)
-            
-            # Resize
-            image = tf.image.resize(image, self.image_size)
-            
-            # Normalize to [0, 1]
-            image = image / 255.0
+        # Resize to target size
+        image = tf.image.resize(image, self.image_size)
+        
+        # Cast to float32 and normalize to [0, 1]
+        image = tf.cast(image, tf.float32) / 255.0
         
         # Apply augmentation if enabled
         if self.augment:
             image = self._apply_augmentation(image)
         
-        # Final normalization
+        # Final normalization (ImageNet stats)
         if self.normalize:
             image = self._normalize_image(image)
         
@@ -127,15 +116,34 @@ class BrainTumorTransforms:
                                     self.aug_config["rotation_range"])
             image = tf.image.rot90(image, k=tf.cast(angle / 90, tf.int32))
         
-        # Random zoom
+        # Random zoom (dtype-safe version)
         if self.aug_config["zoom_range"] > 0:
-            zoom_factor = tf.random.uniform([], 
-                                         1 - self.aug_config["zoom_range"],
-                                         1 + self.aug_config["zoom_range"])
-            image = tf.image.resize_with_crop_or_pad(image, 
-                                                   tf.cast(tf.shape(image)[0] * zoom_factor, tf.int32),
-                                                   tf.cast(tf.shape(image)[1] * zoom_factor, tf.int32))
-            image = tf.image.resize(image, self.image_size)
+            # Get image dimensions as int32
+            h = tf.shape(image)[0]  # int32
+            w = tf.shape(image)[1]  # int32
+            
+            # Sample zoom factor z ~ Uniform(1-zoom_range, 1+zoom_range)
+            z = tf.random.uniform([], 
+                                1.0 - self.aug_config["zoom_range"],
+                                1.0 + self.aug_config["zoom_range"])
+            
+            # Branch based on zoom direction
+            def zoom_in():
+                # z <= 1: zoom-in (crop center then resize)
+                frac = 1.0 / z  # central_fraction
+                cropped = tf.image.central_crop(image, central_fraction=frac)
+                return tf.image.resize(cropped, (h, w))
+            
+            def zoom_out():
+                # z > 1: zoom-out (resize larger then crop/pad back)
+                # Compute new sizes in float, then cast to int32
+                nh = tf.cast(tf.round(tf.cast(h, tf.float32) * z), tf.int32)
+                nw = tf.cast(tf.round(tf.cast(w, tf.float32) * z), tf.int32)
+                resized = tf.image.resize(image, (nh, nw))
+                return tf.image.resize_with_crop_or_pad(resized, h, w)
+            
+            # Conditional: if z <= 1.0 use zoom_in, else zoom_out
+            image = tf.cond(z <= 1.0, zoom_in, zoom_out)
         
         # Random brightness
         if self.aug_config["brightness_range"] > 0:

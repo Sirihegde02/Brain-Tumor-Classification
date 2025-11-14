@@ -40,6 +40,7 @@ def collect_image_paths(data_dir="data/raw"):
     class_names = normalized_classes[:]
     
     print("Collecting image paths...")
+    repo_root = Path(__file__).resolve().parents[2]
 
     # Detect Kaggle nested layout (Training/ and Testing/ under data_dir)
     nested_training = data_path / "Training"
@@ -59,7 +60,12 @@ def collect_image_paths(data_dir="data/raw"):
                 for ext in ["*.jpg", "*.jpeg", "*.png", "*.bmp"]:
                     image_files.extend(class_dir.glob(ext))
                 for img_path in image_files:
-                    image_paths.append(str(img_path.relative_to(Path.cwd())))
+                    full_path = img_path.resolve()
+                    try:
+                        rel_path = full_path.relative_to(repo_root)
+                        image_paths.append(str(rel_path))
+                    except ValueError:
+                        image_paths.append(str(full_path))
                     labels.append(class_mapping[norm_name])
                     per_class_counts[norm_name] = per_class_counts.get(norm_name, 0) + 1
         # Print summary per normalized class
@@ -79,7 +85,12 @@ def collect_image_paths(data_dir="data/raw"):
             print(f"Found {len(image_files)} images in {norm_name} (from '{alias}')")
             
             for img_path in image_files:
-                image_paths.append(str(img_path.relative_to(Path.cwd())))
+                full_path = img_path.resolve()
+                try:
+                    rel_path = full_path.relative_to(repo_root)
+                    image_paths.append(str(rel_path))
+                except ValueError:
+                    image_paths.append(str(full_path))
                 labels.append(class_mapping[norm_name])
     
     print(f"Total images collected: {len(image_paths)}")
