@@ -96,10 +96,17 @@ def compile_model(model, config):
     ]
     
     # Compile model
+    loss_name = (
+        cfg.get("training", {}).get("loss")
+        or cfg.get("compile", {}).get("loss")
+        or "sparse_categorical_crossentropy"
+    )
+    metrics = cfg.get("compile", {}).get("metrics", ["accuracy"])
+
     model.model.compile(
         optimizer=optimizer,
-        loss=loss,
-        metrics=metrics
+        loss=loss_name,
+        metrics=metrics,
     )
     
     return model
@@ -160,19 +167,19 @@ def train_model(model, train_data, val_data, config, callbacks, class_weights=No
     print(f"Validation samples: {len(val_data) * config['data']['batch_size']}")
     
     # Training parameters
-    epochs = config['training']['epochs']
+    epochs = cfg.get("training", {}).get("epochs", 3)  # default 3 if missing
     batch_size = config['data']['batch_size']
     
     # Train model
     history = model.model.fit(
-        train_data,
-        validation_data=val_data,
-        epochs=epochs,
-        batch_size=batch_size,
-        callbacks=callbacks,
-        class_weight=class_weights,
-        verbose=1
+    train_data,
+    validation_data=val_data,
+    epochs=epochs,
+    callbacks=callbacks,
+    class_weight=class_weights,
+    verbose=1,
     )
+
     
     return history
 
@@ -239,7 +246,7 @@ def main():
     model = create_model(config)
     
     # Print model info
-    print_model_summary(model.model, show_layers=False, show_parameters=True)
+    model.model.summary()
     
     # Compile model
     model = compile_model(model, config)
