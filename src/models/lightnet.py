@@ -1,7 +1,7 @@
 """
-LightNet - Lightweight CNN model for brain tumor classification
+LightNet - parameter-efficient variant of LEAD-CNN for brain tumor classification.
 
-This module implements a lightweight model with ≤10% of LEAD-CNN's parameters
+This module implements a lightweight network with ≤10% of LEAD-CNN's parameters
 using depthwise-separable convolutions, squeeze-and-excitation, and efficient blocks.
 """
 import tensorflow as tf
@@ -26,7 +26,7 @@ class LightNet(keras.Model):
                  num_classes: int = 4,
                  dropout_rate: float = 0.3,
                  use_se: bool = True,
-                 channel_multiplier: float = 1.0,
+                 channel_multiplier: float = 0.5,
                  name: str = "LightNet",
                  **kwargs):
         """
@@ -180,6 +180,35 @@ class LightNet(keras.Model):
     def load_weights(self, filepath, **kwargs):
         """Load model weights"""
         return self.model.load_weights(filepath, **kwargs)
+
+
+def build_lightnet(input_shape: Tuple[int, int, int] = (224, 224, 3),
+                   num_classes: int = 4,
+                   dropout_rate: float = 0.3,
+                   use_se: bool = True,
+                   channel_multiplier: float = 0.5,
+                   **kwargs) -> LightNet:
+    """
+    Build a LightNet model with reduced channel counts and efficient blocks.
+    
+    Args:
+        input_shape: Input tensor shape.
+        num_classes: Number of output classes.
+        dropout_rate: Dropout rate applied before the classifier.
+        use_se: Whether to enable squeeze-and-excitation.
+        channel_multiplier: Width multiplier controlling parameter budget.
+    
+    Returns:
+        Configured LightNet instance.
+    """
+    return LightNet(
+        input_shape=input_shape,
+        num_classes=num_classes,
+        dropout_rate=dropout_rate,
+        use_se=use_se,
+        channel_multiplier=channel_multiplier,
+        **kwargs,
+    )
 
 
 class LightNetV2(keras.Model):

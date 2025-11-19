@@ -265,8 +265,8 @@ If you use this project in your research, please cite:
 ```bibtex
 @software{brain_tumor_lightnet,
   title={Brain Tumor Lightweight Classifier},
-  author={Your Name},
-  year={2024},
+  author={Siri Hegde},
+  year={2025},
   url={https://github.com/your-username/brain-tumor-lightnet}
 }
 ```

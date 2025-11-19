@@ -19,7 +19,8 @@ from tensorflow import keras
 sys.path.append(str(Path(__file__).parent.parent))
 
 from models.lead_cnn import create_lead_cnn
-from models.blocks import DimensionReductionBlock, SqueezeExcitation
+from models.lightnet import build_lightnet
+from models.blocks import DimensionReductionBlock, LiteDRBlock, SqueezeExcitation
 from data.transforms import create_data_generators, get_class_weights
 from utils.seed import set_seed
 from utils.io import (
@@ -62,12 +63,29 @@ def load_config(config_path):
 
 
 def create_model(config):
-    """Create LEAD-CNN model"""
-    model = create_lead_cnn(
-        input_shape=tuple(config['model']['input_shape']),
-        num_classes=config['model']['num_classes'],
-        dropout_rate=config['model']['dropout_rate']
-    )
+    """Create model (LEAD-CNN or LightNet) based on configuration."""
+    model_cfg = config.get("model", {})
+    model_type = model_cfg.get("type", "lead_cnn").lower()
+    input_shape = tuple(model_cfg.get("input_shape", (224, 224, 3)))
+    num_classes = model_cfg.get("num_classes", 4)
+    dropout_rate = model_cfg.get("dropout_rate", 0.5)
+    
+    if model_type == "lead_cnn":
+        model = create_lead_cnn(
+            input_shape=input_shape,
+            num_classes=num_classes,
+            dropout_rate=dropout_rate,
+        )
+    elif model_type == "lightnet":
+        model = build_lightnet(
+            input_shape=input_shape,
+            num_classes=num_classes,
+            dropout_rate=dropout_rate,
+            use_se=model_cfg.get("use_se", True),
+            channel_multiplier=model_cfg.get("channel_multiplier", 0.5),
+        )
+    else:
+        raise ValueError(f"Unknown model type '{model_type}' in configuration.")
     
     return model
 
@@ -272,6 +290,7 @@ def evaluate_and_log_metrics(test_data, output_dir, splits_file):
     print("\nRunning detailed evaluation with ClassificationMetrics...")
     custom_objects = {
         "DimensionReductionBlock": DimensionReductionBlock,
+        "LiteDRBlock": LiteDRBlock,
         "SqueezeExcitation": SqueezeExcitation,
     }
     best_model = tf.keras.models.load_model(str(best_model_path), custom_objects=custom_objects)
@@ -355,7 +374,8 @@ def main():
         class_weights = get_class_weights(args.splits_file)
     
     # Create model
-    print("Creating LEAD-CNN model...")
+    model_type = config.get("model", {}).get("type", "lead_cnn").upper()
+    print(f"Creating {model_type} model...")
     model = create_model(config)
     
     # Print model info

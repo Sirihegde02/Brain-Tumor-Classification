@@ -1,0 +1,45 @@
+# LightNet Baseline Configuration
+
+model:
+  type: lightnet
+  input_shape: [224, 224, 3]
+  num_classes: 4
+  dropout_rate: 0.3
+  use_se: true
+  channel_multiplier: 0.5
+
+data:
+  batch_size: 16
+  image_size: [224, 224]
+  augmentation:
+    horizontal_flip: true
+    vertical_flip: false
+    rotation_range: 15.0
+    zoom_range: 0.1
+    brightness_range: 0.1
+    contrast_range: 0.1
+    noise_std: 0.01
+
+compile:
+  optimizer: adam
+  loss: sparse_categorical_crossentropy
+  metrics:
+    - accuracy
+
+training:
+  epochs: 40
+  use_class_weights: true
+  monitor: "val_accuracy"
+  monitor_mode: "max"
+  early_stopping:
+    enabled: true
+    patience: 8
+  tensorboard:
+    enabled: true
+
+evaluation:
+  metrics: ["accuracy","precision","recall","f1","cohen_kappa","roc_auc"]
+  gradcam:
+    enabled: true
+    num_samples_per_class: 2
+    layer_name: null
