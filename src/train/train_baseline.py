@@ -11,6 +11,7 @@ import json
 import yaml
 from pathlib import Path
 import numpy as np
+import pandas as pd
 import tensorflow as tf
 from tensorflow import keras
 
@@ -18,6 +19,7 @@ from tensorflow import keras
 sys.path.append(str(Path(__file__).parent.parent))
 
 from models.lead_cnn import create_lead_cnn
+from models.blocks import DimensionReductionBlock, SqueezeExcitation
 from data.transforms import create_data_generators, get_class_weights
 from utils.seed import set_seed
 from utils.io import (
@@ -28,6 +30,7 @@ from utils.io import (
     create_tensorboard_callback,
 )
 from utils.params import count_parameters, print_model_summary
+from eval.metrics import ClassificationMetrics
 
 
 def parse_args():
@@ -200,7 +203,7 @@ def create_callbacks(config, output_dir):
     return callbacks
 
 
-def train_model(model, train_data, val_data, config, callbacks, class_weights=None):
+def train_model(model, train_data, val_data, config, callbacks, output_dir, class_weights=None):
     """Train the model"""
     print("Starting training...")
     print(f"Training samples: {len(train_data) * config['data']['batch_size']}")
@@ -218,8 +221,16 @@ def train_model(model, train_data, val_data, config, callbacks, class_weights=No
         class_weight=class_weights,
         verbose=1,
     )
-
     
+    # Persist training curves for downstream analysis
+    history_df = pd.DataFrame(history.history)
+    history_df.insert(0, "epoch", np.arange(1, len(history_df) + 1))
+    history_csv_path = os.path.join(output_dir, "history.csv")
+    Path(history_csv_path).parent.mkdir(parents=True, exist_ok=True)
+    history_df.to_csv(history_csv_path, index=False)
+    print(f"Saved training history to {history_csv_path}")
+
+
     return history
 
 
@@ -245,6 +256,57 @@ def save_results(model, history, config, output_dir):
         yaml.dump(config, f, default_flow_style=False, indent=2)
     
     print(f"Results saved to: {output_path}")
+
+
+def evaluate_and_log_metrics(test_data, output_dir, splits_file):
+    """
+    Load the best checkpoint, run it on the test set, and log detailed metrics.
+    """
+    output_path = Path(output_dir)
+    best_model_path = output_path / "checkpoints" / "lead_cnn_best.h5"
+    
+    if not best_model_path.exists():
+        print(f"Best checkpoint not found at {best_model_path}, skipping detailed evaluation.")
+        return
+    
+    print("\nRunning detailed evaluation with ClassificationMetrics...")
+    custom_objects = {
+        "DimensionReductionBlock": DimensionReductionBlock,
+        "SqueezeExcitation": SqueezeExcitation,
+    }
+    best_model = tf.keras.models.load_model(str(best_model_path), custom_objects=custom_objects)
+    
+    y_true = []
+    y_pred_proba = []
+    
+    for batch_x, batch_y in test_data:
+        preds = best_model.predict(batch_x, verbose=0)
+        y_pred_proba.append(preds)
+        y_true.append(batch_y.numpy())
+    
+    if not y_true:
+        print("Test dataset is empty; skipping detailed metrics.")
+        return
+    
+    y_true = np.concatenate(y_true, axis=0)
+    y_pred_proba = np.concatenate(y_pred_proba, axis=0)
+    y_pred = np.argmax(y_pred_proba, axis=1)
+    
+    class_names = None
+    try:
+        with open(splits_file, "r") as f:
+            splits = json.load(f)
+            class_names = splits.get("metadata", {}).get("class_names")
+    except FileNotFoundError:
+        class_names = None
+    
+    metrics_calc = ClassificationMetrics(class_names=class_names)
+    metrics = metrics_calc.calculate_metrics(y_true, y_pred, y_pred_proba=y_pred_proba)
+    metrics_calc.print_metrics(metrics)
+    
+    metrics_path = output_path / "test_metrics.json"
+    metrics_calc.save_metrics(metrics, metrics_path)
+    print(f"Detailed metrics saved to: {metrics_path}")
 
 
 def main():
@@ -311,7 +373,15 @@ def main():
         model.load_weights(args.resume)
     
     # Train model
-    history = train_model(model, train_data, val_data, config, callbacks, class_weights)
+    history = train_model(
+        model,
+        train_data,
+        val_data,
+        config,
+        callbacks,
+        str(output_dir),
+        class_weights,
+    )
     
     # Save results
     save_results(model, history, config, args.output_dir)
@@ -323,6 +393,8 @@ def main():
     print("Test Results:")
     for name, value in zip(model.model.metrics_names, test_results):
         print(f"  {name}: {value:.4f}")
+    
+    evaluate_and_log_metrics(test_data, output_dir, args.splits_file)
     
     print("Training completed successfully!")
 

@@ -4,16 +4,27 @@ Comprehensive evaluation metrics for brain tumor classification
 Includes Cohen's kappa, precision, recall, F1, and other metrics
 for model evaluation and comparison.
 """
+import argparse
+import json
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
 import numpy as np
 import tensorflow as tf
 from sklearn.metrics import (
-    accuracy_score, precision_score, recall_score, f1_score,
-    cohen_kappa_score, confusion_matrix, classification_report,
-    roc_auc_score, roc_curve, precision_recall_curve
+    accuracy_score,
+    classification_report,
+    cohen_kappa_score,
+    confusion_matrix,
+    f1_score,
+    precision_recall_curve,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+    roc_curve,
 )
-from typing import Dict, List, Tuple, Any, Optional
-import json
-from pathlib import Path
+
+from data.transforms import create_data_generators
 
 
 class ClassificationMetrics:
@@ -293,30 +304,54 @@ def create_comparison_table(results: Dict[str, Dict[str, Any]]) -> str:
     return table
 
 
-if __name__ == "__main__":
-    # Test metrics calculation
-    print("Testing classification metrics...")
+def parse_args():
+    """Parse command line arguments for quick CLI evaluation."""
+    parser = argparse.ArgumentParser(description="Evaluate a saved model with detailed classification metrics.")
+    parser.add_argument("--model_path", type=str, required=True, help="Path to the trained model file (.h5 or .keras).")
+    parser.add_argument("--splits_file", type=str, default="data/splits.json", help="Path to data splits JSON.")
+    parser.add_argument("--batch_size", type=int, default=32, help="Batch size for evaluation dataset.")
+    parser.add_argument(
+        "--image_size",
+        type=int,
+        nargs=2,
+        default=[224, 224],
+        metavar=("H", "W"),
+        help="Image size (height width) for preprocessing.",
+    )
+    parser.add_argument(
+        "--output_json",
+        type=str,
+        default=None,
+        help="Optional path to save metrics JSON (defaults to printing only).",
+    )
+    return parser.parse_args()
+
+
+def run_cli():
+    """Command-line interface for evaluating a saved model on the test split."""
+    args = parse_args()
     
-    # Create dummy data
-    y_true = np.array([0, 1, 2, 0, 1, 2, 0, 1, 2])
-    y_pred = np.array([0, 1, 1, 0, 1, 2, 0, 1, 2])
-    y_pred_proba = np.array([
-        [0.8, 0.1, 0.1],
-        [0.1, 0.7, 0.2],
-        [0.1, 0.6, 0.3],
-        [0.9, 0.05, 0.05],
-        [0.1, 0.8, 0.1],
-        [0.1, 0.2, 0.7],
-        [0.7, 0.2, 0.1],
-        [0.1, 0.8, 0.1],
-        [0.1, 0.1, 0.8]
-    ])
+    datasets = create_data_generators(
+        splits_file=args.splits_file,
+        batch_size=args.batch_size,
+        image_size=tuple(args.image_size),
+        augmentation_config=None,
+    )
+    test_data = datasets["test"]
     
-    # Calculate metrics
-    metrics_calc = ClassificationMetrics()
-    metrics = metrics_calc.calculate_metrics(y_true, y_pred, y_pred_proba)
+    with open(args.splits_file, "r") as f:
+        splits = json.load(f)
+    class_names = splits.get("metadata", {}).get("class_names")
     
-    # Print results
+    model = tf.keras.models.load_model(args.model_path)
+    metrics = evaluate_model(model, test_data, class_names)
+    
+    metrics_calc = ClassificationMetrics(class_names)
     metrics_calc.print_metrics(metrics)
     
-    print("Metrics calculation test completed!")
+    if args.output_json:
+        metrics_calc.save_metrics(metrics, args.output_json)
+
+
+if __name__ == "__main__":
+    run_cli()

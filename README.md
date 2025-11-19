@@ -111,6 +111,14 @@ python src/eval/evaluate.py \
     --model_paths outputs/checkpoints/lead_cnn_best.h5 outputs/checkpoints/lightnet_best.h5 outputs/checkpoints/lightnet_kd_best.h5 \
     --model_names LEAD-CNN LightNet KD-LightNet \
     --compare --generate_gradcam
+
+# Evaluate LEAD-CNN baseline with detailed classification metrics
+python src/eval/metrics.py \
+    --model_path outputs/baseline_leadcnn/checkpoints/lead_cnn_best.h5 \
+    --splits_file src/data/splits.json \
+    --batch_size 32 \
+    --image_size 224 224 \
+    --output_json outputs/baseline_leadcnn/test_metrics.json
 ```
 
 ### 5. Using Makefile (Recommended)

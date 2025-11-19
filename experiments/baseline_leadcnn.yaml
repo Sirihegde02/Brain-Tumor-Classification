@@ -24,13 +24,13 @@ compile:
     - accuracy
 
 training:
-  epochs: 3
+  epochs: 40
   use_class_weights: true
   monitor: "val_accuracy"
   monitor_mode: "max"
   early_stopping:
     enabled: true
-    patience: 15
+    patience: 8
   tensorboard:
     enabled: true
 
