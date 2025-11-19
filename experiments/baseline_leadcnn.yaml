@@ -19,23 +19,18 @@ data:
 
 compile:
   optimizer: adam
-  metrics: [accuracy]
+  loss: sparse_categorical_crossentropy
+  metrics:
+    - accuracy
 
 training:
   epochs: 3
-  loss: sparse_categorical_crossentropy   # <-- add this
   use_class_weights: true
   monitor: "val_accuracy"
   monitor_mode: "max"
   early_stopping:
     enabled: true
     patience: 15
-  lr_scheduler:
-    enabled: false
-    type: "reduce_on_plateau"
-    factor: 0.5
-    patience: 10
-    min_lr: 1e-7
   tensorboard:
     enabled: true
 

@@ -20,7 +20,13 @@ sys.path.append(str(Path(__file__).parent.parent))
 from models.lead_cnn import create_lead_cnn
 from data.transforms import create_data_generators, get_class_weights
 from utils.seed import set_seed
-from utils.io import save_model, save_history, create_checkpoint_callback, create_tensorboard_callback
+from utils.io import (
+    save_model,
+    save_history,
+    save_model_summary,
+    create_checkpoint_callback,
+    create_tensorboard_callback,
+)
 from utils.params import count_parameters, print_model_summary
 
 
@@ -39,6 +45,8 @@ def parse_args():
                        help="Path to checkpoint to resume from")
     parser.add_argument("--seed", type=int, default=42,
                        help="Random seed")
+    parser.add_argument("--sanity_steps", type=int, default=0,
+                       help="Limit each dataset split to this many batches for quick sanity checks (0 disables)")
     
     return parser.parse_args()
 
@@ -63,49 +71,81 @@ def create_model(config):
 
 def compile_model(model, config):
     """Compile model with optimizer and loss"""
-    # Optimizer
-    if config['training']['optimizer']['type'] == 'adam':
+    compile_cfg = config.get("compile", {})
+    training_cfg = config.get("training", {})
+    
+    optimizer_cfg = training_cfg.get("optimizer") or compile_cfg.get("optimizer") or {"type": "adam"}
+    if isinstance(optimizer_cfg, str):
+        optimizer_type = optimizer_cfg.lower()
+        optimizer_params = {}
+    else:
+        optimizer_type = optimizer_cfg.get("type", "adam").lower()
+        optimizer_params = optimizer_cfg
+    
+    learning_rate = optimizer_params.get("learning_rate", 1e-3)
+    
+    if optimizer_type == "adam":
         optimizer = keras.optimizers.Adam(
-            learning_rate=config['training']['optimizer']['learning_rate'],
-            beta_1=config['training']['optimizer'].get('beta_1', 0.9),
-            beta_2=config['training']['optimizer'].get('beta_2', 0.999)
+            learning_rate=learning_rate,
+            beta_1=optimizer_params.get("beta_1", 0.9),
+            beta_2=optimizer_params.get("beta_2", 0.999)
         )
-    elif config['training']['optimizer']['type'] == 'sgd':
+    elif optimizer_type == "adamw":
+        optimizer = keras.optimizers.AdamW(
+            learning_rate=learning_rate,
+            weight_decay=optimizer_params.get("weight_decay", 0.0),
+            beta_1=optimizer_params.get("beta_1", 0.9),
+            beta_2=optimizer_params.get("beta_2", 0.999)
+        )
+    elif optimizer_type == "sgd":
         optimizer = keras.optimizers.SGD(
-            learning_rate=config['training']['optimizer']['learning_rate'],
-            momentum=config['training']['optimizer'].get('momentum', 0.9),
-            nesterov=config['training']['optimizer'].get('nesterov', True)
+            learning_rate=learning_rate,
+            momentum=optimizer_params.get("momentum", 0.9),
+            nesterov=optimizer_params.get("nesterov", True)
         )
     else:
-        raise ValueError(f"Unknown optimizer: {config['training']['optimizer']['type']}")
+        raise ValueError(f"Unknown optimizer: {optimizer_type}")
     
     # Loss function
-    if config['training']['loss'] == 'categorical_crossentropy':
-        loss = keras.losses.CategoricalCrossentropy(
-            label_smoothing=config['training'].get('label_smoothing', 0.0)
-        )
-    else:
-        loss = config['training']['loss']
-    
-    # Metrics
-    metrics = [
-        keras.metrics.CategoricalAccuracy(name='accuracy'),
-        keras.metrics.Precision(name='precision'),
-        keras.metrics.Recall(name='recall'),
-        keras.metrics.AUC(name='auc')
-    ]
-    
-    # Compile model
     loss_name = (
-        cfg.get("training", {}).get("loss")
-        or cfg.get("compile", {}).get("loss")
+        compile_cfg.get("loss")
+        or training_cfg.get("loss")
         or "sparse_categorical_crossentropy"
     )
-    metrics = cfg.get("compile", {}).get("metrics", ["accuracy"])
+    label_smoothing = training_cfg.get("label_smoothing", 0.0)
+    
+    if loss_name == "categorical_crossentropy":
+        loss = keras.losses.CategoricalCrossentropy(label_smoothing=label_smoothing)
+    elif loss_name == "sparse_categorical_crossentropy":
+        loss = keras.losses.SparseCategoricalCrossentropy(from_logits=False)
+    else:
+        loss = loss_name
+    
+    # Metrics (default to sparse categorical accuracy for integer labels)
+    metrics_cfg = compile_cfg.get("metrics", ["accuracy"])
+    metrics = []
+    for metric in metrics_cfg:
+        if isinstance(metric, str):
+            metric_name = metric.lower()
+            if metric_name in ("accuracy", "acc", "sparse_categorical_accuracy"):
+                metrics.append(keras.metrics.SparseCategoricalAccuracy(name="accuracy"))
+            elif metric_name == "precision":
+                metrics.append(keras.metrics.Precision(name="precision"))
+            elif metric_name == "recall":
+                metrics.append(keras.metrics.Recall(name="recall"))
+            elif metric_name in ("auc", "roc_auc"):
+                metrics.append(keras.metrics.AUC(name="auc"))
+            else:
+                metrics.append(metric)
+        else:
+            metrics.append(metric)
+    
+    if not metrics:
+        metrics = [keras.metrics.SparseCategoricalAccuracy(name="accuracy")]
 
     model.model.compile(
         optimizer=optimizer,
-        loss=loss_name,
+        loss=loss,
         metrics=metrics,
     )
     
@@ -167,17 +207,16 @@ def train_model(model, train_data, val_data, config, callbacks, class_weights=No
     print(f"Validation samples: {len(val_data) * config['data']['batch_size']}")
     
     # Training parameters
-    epochs = cfg.get("training", {}).get("epochs", 3)  # default 3 if missing
-    batch_size = config['data']['batch_size']
+    epochs = config.get("training", {}).get("epochs", 3)  # default 3 if missing
     
     # Train model
     history = model.model.fit(
-    train_data,
-    validation_data=val_data,
-    epochs=epochs,
-    callbacks=callbacks,
-    class_weight=class_weights,
-    verbose=1,
+        train_data,
+        validation_data=val_data,
+        epochs=epochs,
+        callbacks=callbacks,
+        class_weight=class_weights,
+        verbose=1,
     )
 
     
@@ -236,6 +275,18 @@ def main():
     val_data = datasets['val']
     test_data = datasets['test']
     
+    # Inspect one batch to verify label shapes/dtypes
+    for images, labels in train_data.take(1):
+        print(f"Train batch debug -> x: {images.shape}, y: {labels.shape}, dtype: {labels.dtype}")
+        break
+    
+    # Optional sanity-check mode to cap number of batches per split
+    if args.sanity_steps > 0:
+        print(f"Sanity-check mode enabled: limiting each split to {args.sanity_steps} batches.")
+        train_data = train_data.take(args.sanity_steps)
+        val_data = val_data.take(max(1, args.sanity_steps))
+        test_data = test_data.take(max(1, args.sanity_steps))
+    
     # Get class weights
     class_weights = None
     if config['training'].get('use_class_weights', False):
@@ -269,12 +320,9 @@ def main():
     print("\nEvaluating on test set...")
     test_results = model.model.evaluate(test_data, verbose=1)
     
-    print(f"Test Results:")
-    print(f"  Loss: {test_results[0]:.4f}")
-    print(f"  Accuracy: {test_results[1]:.4f}")
-    print(f"  Precision: {test_results[2]:.4f}")
-    print(f"  Recall: {test_results[3]:.4f}")
-    print(f"  AUC: {test_results[4]:.4f}")
+    print("Test Results:")
+    for name, value in zip(model.model.metrics_names, test_results):
+        print(f"  {name}: {value:.4f}")
     
     print("Training completed successfully!")
 

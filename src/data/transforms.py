@@ -130,7 +130,7 @@ class BrainTumorTransforms:
             # Branch based on zoom direction
             def zoom_in():
                 # z <= 1: zoom-in (crop center then resize)
-                frac = 1.0 / z  # central_fraction
+                frac = tf.clip_by_value(z, 1e-3, 1.0)  # central_fraction must be in (0, 1]
                 cropped = tf.image.central_crop(image, central_fraction=frac)
                 return tf.image.resize(cropped, (h, w))
             
@@ -231,7 +231,7 @@ class BrainTumorTransforms:
         return dataset
 
 
-def create_data_generators(splits_file: str = "data/splits.json",
+def create_data_generators(splits_file: str = "src/data/splits.json",
                           batch_size: int = 32,
                           image_size: Tuple[int, int] = (224, 224),
                           augmentation_config: Optional[Dict[str, Any]] = None) -> Dict[str, tf.data.Dataset]:
