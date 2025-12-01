@@ -211,6 +211,54 @@ def build_lightnet(input_shape: Tuple[int, int, int] = (224, 224, 3),
     )
 
 
+def build_lightnet_v2(input_shape: Tuple[int, int, int] = (224, 224, 3),
+                      num_classes: int = 4,
+                      dropout_rate: float = 0.3) -> tf.keras.Model:
+    """
+    Build LightNetV2 - a slightly larger yet still efficient network.
+    
+    Args:
+        input_shape: Input tensor shape.
+        num_classes: Number of output classes.
+        dropout_rate: Dropout rate before the dense classifier.
+    
+    Returns:
+        Configured Keras Model instance named LightNetV2.
+    """
+    inputs = keras.layers.Input(shape=input_shape, name="input")
+    
+    x = keras.layers.Conv2D(
+        filters=32,
+        kernel_size=3,
+        strides=2,
+        padding="same",
+        use_bias=False,
+        name="stem_conv",
+    )(inputs)
+    x = keras.layers.BatchNormalization(name="stem_bn")(x)
+    x = keras.layers.LeakyReLU(alpha=0.1, name="stem_activation")(x)
+    
+    channels = [32, 64, 128, 192]
+    strides = [(1, 1), (2, 2), (2, 2), (2, 2)]
+    dropouts = [0.1, 0.15, 0.2, 0.25]
+    
+    for idx, (filters, stride, dr) in enumerate(zip(channels, strides, dropouts), start=1):
+        x = LiteDRBlock(
+            filters=filters,
+            kernel_size=(3, 3),
+            strides=stride,
+            dropout_rate=dr,
+            use_se=True,
+            name=f"lite_dr2_{idx}",
+        )(x)
+    
+    x = keras.layers.GlobalAveragePooling2D(name="global_avg_pool")(x)
+    x = keras.layers.Dropout(dropout_rate, name="dropout")(x)
+    x = keras.layers.Dense(256, activation="relu", name="dense1")(x)
+    outputs = keras.layers.Dense(num_classes, activation="softmax", name="output")(x)
+    
+    return keras.Model(inputs=inputs, outputs=outputs, name="LightNetV2")
+
 class LightNetV2(keras.Model):
     """
     LightNet V2 - Even more lightweight version

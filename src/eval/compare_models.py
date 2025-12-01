@@ -5,7 +5,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple
 
 import yaml
 
@@ -25,8 +25,7 @@ def load_metrics(path: Path) -> Dict[str, Any]:
         return json.load(f)
 
 
-def format_markdown_table(name_a: str, metrics_a: Dict[str, Any],
-                          name_b: str, metrics_b: Dict[str, Any]) -> str:
+def format_markdown_table(models: List[Tuple[str, Dict[str, Any]]]) -> str:
     """Create a markdown comparison table for selected metrics."""
     keys = [
         ("accuracy", "Accuracy"),
@@ -36,15 +35,21 @@ def format_markdown_table(name_a: str, metrics_a: Dict[str, Any],
         ("cohen_kappa", "Cohen's Kappa"),
         ("roc_auc", "ROC AUC"),
     ]
-    
-    lines = ["| Metric | {a} | {b} |".format(a=name_a, b=name_b),
-             "|---|---|---|"]
+
+    header = "| Metric | " + " | ".join(name for name, _ in models) + " |"
+    divider = "|---|" + "|".join(["---"] * len(models)) + "|"
+    lines = [header, divider]
+
     for key, label in keys:
-        a_val = metrics_a.get(key)
-        b_val = metrics_b.get(key)
-        a_str = f"{a_val:.4f}" if isinstance(a_val, (int, float)) else str(a_val)
-        b_str = f"{b_val:.4f}" if isinstance(b_val, (int, float)) else str(b_val)
-        lines.append(f"| {label} | {a_str} | {b_str} |")
+        row = [label]
+        for _, metrics in models:
+            val = metrics.get(key)
+            if isinstance(val, (int, float)):
+                row.append(f"{val:.4f}")
+            else:
+                row.append(str(val))
+        lines.append("| " + " | ".join(row) + " |")
+
     return "\n".join(lines)
 
 
@@ -114,32 +119,57 @@ def report_model_info(name: str, run_dir: Path, summary_filename: str) -> None:
     print(f"  Model size (MB): {model_size_mb:.2f}")
 
 
+def build_model_list(args) -> List[Tuple[str, Path]]:
+    models = []
+    if args.models:
+        for entry in args.models:
+            if "=" not in entry:
+                raise ValueError(f"Invalid --models entry '{entry}', expected Name=path")
+            name, path = entry.split("=", 1)
+            models.append((name.strip(), Path(path.strip())))
+    else:
+        if args.name_a and args.results_a and args.name_b and args.results_b:
+            models.append((args.name_a, Path(args.results_a)))
+            models.append((args.name_b, Path(args.results_b)))
+        else:
+            raise ValueError("Provide either --models or both --name_a/--results_a and --name_b/--results_b")
+    return models
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Compare two trained models using saved metrics.")
-    parser.add_argument("--name_a", required=True, help="Display name for model A.")
-    parser.add_argument("--results_a", required=True, help="Path to test_metrics.json for model A.")
-    parser.add_argument("--name_b", required=True, help="Display name for model B.")
-    parser.add_argument("--results_b", required=True, help="Path to test_metrics.json for model B.")
-    parser.add_argument("--summary_filename", default="model_summary.txt",
-                        help="Filename for saved model summaries (default: model_summary.txt).")
+    parser = argparse.ArgumentParser(description="Compare trained models using saved metrics.")
+    parser.add_argument("--name_a", help="Display name for model A.")
+    parser.add_argument("--results_a", help="Path to test_metrics.json for model A.")
+    parser.add_argument("--name_b", help="Display name for model B.")
+    parser.add_argument("--results_b", help="Path to test_metrics.json for model B.")
+    parser.add_argument(
+        "--models",
+        nargs="+",
+        help="List of NAME=path entries (e.g., LEAD=outputs/baseline/test_metrics.json).",
+    )
+    parser.add_argument(
+        "--summary_filename",
+        default="model_summary.txt",
+        help="Filename for saved model summaries (default: model_summary.txt).",
+    )
     args = parser.parse_args()
-    
-    path_a = Path(args.results_a)
-    path_b = Path(args.results_b)
-    
-    metrics_a = load_metrics(path_a)
-    metrics_b = load_metrics(path_b)
-    
+
+    model_specs = build_model_list(args)
+    metrics_entries = []
+
     print("Loaded metrics for:")
-    print(f"  {args.name_a}: {path_a}")
-    print(f"  {args.name_b}: {path_b}\n")
-    
-    table = format_markdown_table(args.name_a, metrics_a, args.name_b, metrics_b)
+    for name, path in model_specs:
+        metrics = load_metrics(path)
+        metrics_entries.append((name, metrics))
+        print(f"  {name}: {path}")
+    print()
+
+    table = format_markdown_table(metrics_entries)
     print("### Metric Comparison")
     print(table)
-    
-    report_model_info(args.name_a, path_a.parent, args.summary_filename)
-    report_model_info(args.name_b, path_b.parent, args.summary_filename)
+
+    for name, path in model_specs:
+        report_model_info(name, path.parent, args.summary_filename)
 
 
 if __name__ == "__main__":

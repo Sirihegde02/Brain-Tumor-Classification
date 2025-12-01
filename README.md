@@ -96,11 +96,17 @@ python src/data/prepare_splits.py --create_csv
 # Train LEAD-CNN baseline
 python src/train/train_baseline.py --config experiments/baseline_leadcnn.yaml
 
-# Train LightNet
-python src/train/train_lightnet.py --config experiments/lightnet_ablation.yaml
+# Train LightNetV2 (lightweight baseline)
+python src/train/train_baseline.py --config experiments/lightnet_v2.yaml \
+  --splits_file src/data/splits.json --output_dir outputs/lightnet_v2
 
-# Train with knowledge distillation
-python src/train/train_kd.py --config experiments/kd.yaml --teacher_path outputs/checkpoints/lead_cnn_best.h5
+# Distill LightNetV2 from a frozen LEAD-CNN teacher
+python src/train/train_distill.py \
+  --config experiments/lightnet_kd.yaml \
+  --splits_file src/data/splits.json \
+  --teacher_path outputs/baseline_leadcnn/checkpoints/lead_cnn_best.h5 \
+  --output_dir outputs/lightnet_v2_kd
+
 ```
 
 ### 4. Evaluation
@@ -119,6 +125,13 @@ python src/eval/metrics.py \
     --batch_size 32 \
     --image_size 224 224 \
     --output_json outputs/baseline_leadcnn/test_metrics.json
+
+# Compare baseline, LightNetV2, and LightNetV2-KD runs
+python src/eval/compare_models.py \
+    --models \
+        LEAD_CNN=outputs/baseline_leadcnn/test_metrics.json \
+        LightNetV2=outputs/lightnet_v2/test_metrics.json \
+        LightNetV2_KD=outputs/lightnet_v2_kd/test_metrics.json
 ```
 
 ### 5. Using Makefile (Recommended)

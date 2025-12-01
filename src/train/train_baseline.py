@@ -19,7 +19,7 @@ from tensorflow import keras
 sys.path.append(str(Path(__file__).parent.parent))
 
 from models.lead_cnn import create_lead_cnn
-from models.lightnet import build_lightnet
+from models.lightnet import build_lightnet, build_lightnet_v2
 from models.blocks import DimensionReductionBlock, LiteDRBlock, SqueezeExcitation
 from data.transforms import create_data_generators, get_class_weights
 from utils.seed import set_seed
@@ -84,8 +84,18 @@ def create_model(config):
             use_se=model_cfg.get("use_se", True),
             channel_multiplier=model_cfg.get("channel_multiplier", 0.5),
         )
-    else:
-        raise ValueError(f"Unknown model type '{model_type}' in configuration.")
+    elif model_type == "lightnet_v2":
+        model = build_lightnet_v2(
+            input_shape=input_shape,
+            num_classes=num_classes,
+            dropout_rate=dropout_rate,
+        )
+
+    # Ensure consistent interface with .model attribute
+    if not hasattr(model, "model"):
+        model.model = model
+    
+    return model
     
     return model
 
@@ -95,7 +105,14 @@ def compile_model(model, config):
     compile_cfg = config.get("compile", {})
     training_cfg = config.get("training", {})
     
-    optimizer_cfg = training_cfg.get("optimizer") or compile_cfg.get("optimizer") or {"type": "adam"}
+    optimizer_cfg = training_cfg.get("optimizer") or compile_cfg.get("optimizer")
+    
+    learning_rate = compile_cfg.get("learning_rate")
+    optimizer_type = "adam"
+    
+    if optimizer_cfg is None:
+        optimizer_cfg = {"type": "adam"}
+    
     if isinstance(optimizer_cfg, str):
         optimizer_type = optimizer_cfg.lower()
         optimizer_params = {}
@@ -103,24 +120,26 @@ def compile_model(model, config):
         optimizer_type = optimizer_cfg.get("type", "adam").lower()
         optimizer_params = optimizer_cfg
     
-    learning_rate = optimizer_params.get("learning_rate", 1e-3)
+    if learning_rate is None:
+        learning_rate = optimizer_params.get("learning_rate", 1e-3)
+    optimizer_params.setdefault("learning_rate", learning_rate)
     
     if optimizer_type == "adam":
         optimizer = keras.optimizers.Adam(
-            learning_rate=learning_rate,
+            learning_rate=optimizer_params.get("learning_rate", 1e-3),
             beta_1=optimizer_params.get("beta_1", 0.9),
             beta_2=optimizer_params.get("beta_2", 0.999)
         )
     elif optimizer_type == "adamw":
         optimizer = keras.optimizers.AdamW(
-            learning_rate=learning_rate,
+            learning_rate=optimizer_params.get("learning_rate", 1e-3),
             weight_decay=optimizer_params.get("weight_decay", 0.0),
             beta_1=optimizer_params.get("beta_1", 0.9),
             beta_2=optimizer_params.get("beta_2", 0.999)
         )
     elif optimizer_type == "sgd":
         optimizer = keras.optimizers.SGD(
-            learning_rate=learning_rate,
+            learning_rate=optimizer_params.get("learning_rate", 1e-3),
             momentum=optimizer_params.get("momentum", 0.9),
             nesterov=optimizer_params.get("nesterov", True)
         )
@@ -200,14 +219,15 @@ def create_callbacks(config, output_dir):
         callbacks.append(early_stopping)
     
     # Learning rate scheduler
-    if config['training'].get('lr_scheduler', {}).get('enabled', False):
-        if config['training']['lr_scheduler']['type'] == 'reduce_on_plateau':
+    lr_cfg = config['training'].get('lr_scheduler', {})
+    if lr_cfg.get('enabled', False):
+        if lr_cfg.get('type') == 'reduce_on_plateau':
             lr_scheduler = keras.callbacks.ReduceLROnPlateau(
                 monitor=config['training']['monitor'],
                 mode=config['training']['monitor_mode'],
-                factor=config['training']['lr_scheduler']['factor'],
-                patience=config['training']['lr_scheduler']['patience'],
-                min_lr=config['training']['lr_scheduler']['min_lr'],
+                factor=float(lr_cfg.get('factor', 0.5)),
+                patience=int(lr_cfg.get('patience', 5)),
+                min_lr=float(lr_cfg.get('min_lr', 1e-6)),
                 verbose=1
             )
             callbacks.append(lr_scheduler)
