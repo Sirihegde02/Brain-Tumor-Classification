@@ -1,6 +1,6 @@
 # Brain Tumor Lightweight Classifier (LEAD-CNN-inspired)
 
-A comprehensive brain tumor classification system that reproduces the LEAD-CNN baseline and creates a 10× lighter model using knowledge distillation techniques.
+A comprehensive brain tumor classification system that reproduces the LEAD-CNN baseline and delivers a lightweight LightNetV2 student distilled from the teacher.
 
 ## 🎯 Project Overview
 
@@ -54,7 +54,8 @@ brain-tumor-lightnet/
 ├── experiments/
 │   ├── baseline_leadcnn.yaml      # LEAD-CNN config
 │   ├── lightnet_ablation.yaml     # LightNet config
-│   └── kd.yaml                     # Knowledge distillation config
+│   ├── lightnet_v2_kd_final.yaml  # Final LightNetV2 KD config (≈121k params)
+│   └── kd.yaml                    # Legacy KD config
 ├── examples/
 │   └── quick_start.py              # Quick start example
 └── outputs/
@@ -100,12 +101,12 @@ python src/train/train_baseline.py --config experiments/baseline_leadcnn.yaml
 python src/train/train_baseline.py --config experiments/lightnet_v2.yaml \
   --splits_file src/data/splits.json --output_dir outputs/lightnet_v2
 
-# Distill LightNetV2 from a frozen LEAD-CNN teacher
-python src/train/train_distill.py \
-  --config experiments/lightnet_kd.yaml \
+# Distill LightNetV2 (full ~120k params) from frozen LEAD-CNN teacher
+python src/train/train_kd.py \
+  --config experiments/lightnet_v2_kd_final.yaml \
   --splits_file src/data/splits.json \
   --teacher_path outputs/baseline_leadcnn/checkpoints/lead_cnn_best.h5 \
-  --output_dir outputs/lightnet_v2_kd
+  --output_dir outputs/lightnet_v2_kd_final
 
 ```
 
@@ -151,20 +152,19 @@ make report        # Generate final report
 
 ## 📈 Model Performance
 
-| Model | Params | FLOPs | Test Acc | F1 | Cohen κ |
-|-------|--------|-------|----------|----|---------| 
-| LEAD-CNN | ~1.13M | - | - | - | - |
-| LightNet | ≤113k | - | - | - | - |
-| KD-LightNet | ≤113k | - | - | - | - |
+| Model                | Params     | Test Acc | Notes                                   |
+|----------------------|-----------:|---------:|-----------------------------------------|
+| LEAD-CNN (teacher)   | ~1.97M     | 0.9388   | `outputs/baseline_leadcnn/*`            |
+| LightNetV2 KD (final)| ~120,940   | 0.8043   | Distilled from LEAD-CNN (retention ~86%)|
 
-*Results will be populated after training*
+Final KD artifacts: `outputs/lightnet_v2_kd_final/checkpoints/lightnet_kd_best.h5`
 
 ## 🔧 Key Features
 
 ### Models
 - **LEAD-CNN**: Faithful reproduction with dimension-reduction blocks and LeakyReLU
-- **LightNet**: Lightweight architecture using depthwise-separable convolutions
-- **Knowledge Distillation**: Soft target and feature distillation losses
+- **LightNet V2 (full)**: ~121k params, MobileNet-style blocks with SE and channel multiplier
+- **Knowledge Distillation**: Soft-target KD (alpha * KL(T) + gamma * CE), no feature loss in final setup
 
 ### Evaluation
 - **Comprehensive Metrics**: Accuracy, Precision, Recall, F1, Cohen's kappa, ROC-AUC

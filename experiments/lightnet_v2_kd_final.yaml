@@ -1,0 +1,49 @@
+# LightNet V2 KD - final config (full ~120k parameter student)
+
+model:
+  input_shape: [224, 224, 3]
+  num_classes: 4
+  version: "v2"
+  dropout_rate: 0.30
+  use_se: true
+  channel_multiplier: 1.0
+
+data:
+  batch_size: 32
+  image_size: [224, 224]
+  augmentation:
+    horizontal_flip: true
+    rotation_range: 10
+    zoom_range: 0.05
+    brightness_range: 0.10
+
+training:
+  epochs: 60
+  optimizer:
+    type: "adam"
+    learning_rate: 0.0004
+  use_class_weights: true
+  loss: "categorical_crossentropy"   # ignored by KD, kept for clarity
+
+  early_stopping:
+    enabled: true
+    patience: 8
+    monitor: "val_accuracy"
+    mode: "max"
+
+distillation:
+  temperature: 4.0
+  alpha: 0.7    # teacher soft targets
+  gamma: 0.3    # hard labels
+  beta: 0.0
+  feature_layers: []
+  feature_weights: []
+
+evaluation:
+  metrics:
+    - accuracy
+    - precision
+    - recall
+    - f1
+    - cohen_kappa
+    - roc_auc

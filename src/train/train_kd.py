@@ -17,12 +17,18 @@ from tensorflow import keras
 # Add src to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from models.lightnet import create_lightnet
+from models.lightnet import create_lightnet, build_lightnet_v2
 from models.lead_cnn import create_lead_cnn
 from models.kd_losses import DistillationModel, create_distillation_loss
 from data.transforms import create_data_generators, get_class_weights
 from utils.seed import set_seed
-from utils.io import save_model, save_history, create_checkpoint_callback, create_tensorboard_callback
+from utils.io import (
+    save_model,
+    save_history,
+    save_model_summary,
+    create_checkpoint_callback,
+    create_tensorboard_callback,
+)
 from utils.params import count_parameters, print_model_summary
 
 
@@ -86,14 +92,24 @@ def create_student_model(config):
     """Create student model (LightNet)"""
     model_config = config['model']
     
-    student = create_lightnet(
-        input_shape=tuple(model_config['input_shape']),
-        num_classes=model_config['num_classes'],
-        version=model_config.get('version', 'v1'),
-        dropout_rate=model_config.get('dropout_rate', 0.3),
-        use_se=model_config.get('use_se', True),
-        channel_multiplier=model_config.get('channel_multiplier', 1.0)
-    )
+    # For KD final config, use the full LightNetV2 builder (≈120k params) with config-driven knobs.
+    if model_config.get('version', 'v2') == 'v2':
+        student = build_lightnet_v2(
+            input_shape=tuple(model_config['input_shape']),
+            num_classes=model_config['num_classes'],
+            dropout_rate=model_config.get('dropout_rate', 0.3),
+            use_se=model_config.get('use_se', True),
+            channel_multiplier=model_config.get('channel_multiplier', 1.0),
+        )
+    else:
+        student = create_lightnet(
+            input_shape=tuple(model_config['input_shape']),
+            num_classes=model_config['num_classes'],
+            version=model_config.get('version', 'v1'),
+            dropout_rate=model_config.get('dropout_rate', 0.3),
+            use_se=model_config.get('use_se', True),
+            channel_multiplier=model_config.get('channel_multiplier', 1.0)
+        )
     
     return student
 
@@ -103,10 +119,14 @@ def create_distillation_model(teacher, student, config):
     # Get feature layers for distillation
     feature_layers = config['distillation'].get('feature_layers', [])
     
+    # Use underlying Keras Models if wrappers are provided
+    teacher_model = getattr(teacher, "model", teacher)
+    student_model = getattr(student, "model", student)
+    
     # Create distillation model
     distillation_model = DistillationModel(
-        teacher_model=teacher,
-        student_model=student,
+        teacher_model=teacher_model,
+        student_model=student_model,
         feature_layers=feature_layers,
         name="distillation_model"
     )
@@ -151,10 +171,8 @@ def compile_distillation_model(distillation_model, config):
     
     # Metrics
     metrics = [
-        keras.metrics.CategoricalAccuracy(name='accuracy'),
-        keras.metrics.Precision(name='precision'),
-        keras.metrics.Recall(name='recall'),
-        keras.metrics.AUC(name='auc')
+        keras.metrics.SparseCategoricalAccuracy(name='accuracy'),
+        keras.metrics.SparseTopKCategoricalAccuracy(k=2, name='top2'),
     ]
     
     # Compile model
@@ -171,12 +189,16 @@ def create_callbacks(config, output_dir):
     """Create training callbacks"""
     callbacks = []
     
+    # Resolve monitor/mode from training or early_stopping sections
+    monitor = config['training'].get('monitor') or config['training'].get('early_stopping', {}).get('monitor', 'val_accuracy')
+    monitor_mode = config['training'].get('monitor_mode') or config['training'].get('early_stopping', {}).get('mode', 'max')
+    
     # Model checkpoint
     checkpoint_path = Path(output_dir) / "checkpoints" / "lightnet_kd_best.h5"
     checkpoint_callback = create_checkpoint_callback(
         filepath=checkpoint_path,
-        monitor=config['training']['monitor'],
-        mode=config['training']['monitor_mode'],
+        monitor=monitor,
+        mode=monitor_mode,
         save_best_only=True,
         save_weights_only=False
     )
@@ -185,8 +207,8 @@ def create_callbacks(config, output_dir):
     # Early stopping
     if config['training'].get('early_stopping', {}).get('enabled', True):
         early_stopping = keras.callbacks.EarlyStopping(
-            monitor=config['training']['monitor'],
-            mode=config['training']['monitor_mode'],
+            monitor=monitor,
+            mode=monitor_mode,
             patience=config['training']['early_stopping']['patience'],
             restore_best_weights=True,
             verbose=1
@@ -197,8 +219,8 @@ def create_callbacks(config, output_dir):
     if config['training'].get('lr_scheduler', {}).get('enabled', False):
         if config['training']['lr_scheduler']['type'] == 'reduce_on_plateau':
             lr_scheduler = keras.callbacks.ReduceLROnPlateau(
-                monitor=config['training']['monitor'],
-                mode=config['training']['monitor_mode'],
+                monitor=monitor,
+                mode=monitor_mode,
                 factor=config['training']['lr_scheduler']['factor'],
                 patience=config['training']['lr_scheduler']['patience'],
                 min_lr=config['training']['lr_scheduler']['min_lr'],
@@ -269,24 +291,28 @@ def save_results(distillation_model, history, config, output_dir):
 def compare_models(teacher, student, test_data):
     """Compare teacher and student performance"""
     print("\nComparing teacher and student models...")
+
+    # Ensure models are compiled for evaluation
+    eval_metrics = [
+        keras.metrics.SparseCategoricalAccuracy(name="accuracy"),
+        keras.metrics.SparseTopKCategoricalAccuracy(k=2, name="top2"),
+    ]
+    teacher.compile(loss="sparse_categorical_crossentropy", metrics=eval_metrics)
+    student.compile(loss="sparse_categorical_crossentropy", metrics=eval_metrics)
     
     # Evaluate teacher
     teacher_results = teacher.evaluate(test_data, verbose=0)
     print(f"Teacher Results:")
     print(f"  Loss: {teacher_results[0]:.4f}")
     print(f"  Accuracy: {teacher_results[1]:.4f}")
-    print(f"  Precision: {teacher_results[2]:.4f}")
-    print(f"  Recall: {teacher_results[3]:.4f}")
-    print(f"  AUC: {teacher_results[4]:.4f}")
+    print(f"  Top-2 Accuracy: {teacher_results[2]:.4f}")
     
     # Evaluate student
     student_results = student.evaluate(test_data, verbose=0)
     print(f"Student Results:")
     print(f"  Loss: {student_results[0]:.4f}")
     print(f"  Accuracy: {student_results[1]:.4f}")
-    print(f"  Precision: {student_results[2]:.4f}")
-    print(f"  Recall: {student_results[3]:.4f}")
-    print(f"  AUC: {student_results[4]:.4f}")
+    print(f"  Top-2 Accuracy: {student_results[2]:.4f}")
     
     # Calculate performance retention
     accuracy_retention = student_results[1] / teacher_results[1] * 100
@@ -340,7 +366,7 @@ def main():
     print(f"Teacher parameters: {teacher_params['total']:,}")
     
     print("\nStudent model info:")
-    student_params = count_parameters(student.model)
+    student_params = count_parameters(student)
     print(f"Student parameters: {student_params['total']:,}")
     print(f"Parameter reduction: {(1 - student_params['total'] / teacher_params['total']) * 100:.1f}%")
     
@@ -366,7 +392,7 @@ def main():
     save_results(distillation_model, history, config, args.output_dir)
     
     # Compare models
-    comparison_results = compare_models(teacher, student.model, test_data)
+    comparison_results = compare_models(teacher, student, test_data)
     
     # Save comparison results
     comparison_path = Path(args.output_dir) / "reports" / "kd_comparison.json"

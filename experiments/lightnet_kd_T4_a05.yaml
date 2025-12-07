@@ -1,0 +1,54 @@
+# LightNet V2 Knowledge Distillation Configuration (T=4.0, alpha=0.5)
+
+model:
+  type: lightnet_v2
+  input_shape: [224, 224, 3]
+  num_classes: 4
+  dropout_rate: 0.3
+
+distillation:
+  alpha: 0.5        # weight for soft loss (KL)
+  temperature: 4.0  # teacher softening temperature
+
+data:
+  batch_size: 16
+  image_size: [224, 224]
+  augmentation:
+    horizontal_flip: true
+    vertical_flip: false
+    rotation_range: 15.0
+    zoom_range: 0.1
+    brightness_range: 0.1
+    contrast_range: 0.1
+    noise_std: 0.01
+
+compile:
+  optimizer: adam
+  learning_rate: 0.0005
+  loss: sparse_categorical_crossentropy
+  metrics:
+    - accuracy
+
+training:
+  epochs: 80
+  use_class_weights: true
+  monitor: "val_accuracy"
+  monitor_mode: "max"
+  early_stopping:
+    enabled: true
+    patience: 10
+  lr_scheduler:
+    enabled: true
+    type: "reduce_on_plateau"
+    factor: 0.5
+    patience: 5
+    min_lr: 1e-6
+  tensorboard:
+    enabled: true
+
+evaluation:
+  metrics: ["accuracy","precision","recall","f1","cohen_kappa","roc_auc"]
+  gradcam:
+    enabled: true
+    num_samples_per_class: 2
+    layer_name: null

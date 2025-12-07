@@ -213,7 +213,9 @@ def build_lightnet(input_shape: Tuple[int, int, int] = (224, 224, 3),
 
 def build_lightnet_v2(input_shape: Tuple[int, int, int] = (224, 224, 3),
                       num_classes: int = 4,
-                      dropout_rate: float = 0.3) -> tf.keras.Model:
+                      dropout_rate: float = 0.3,
+                      use_se: bool = True,
+                      channel_multiplier: float = 1.0) -> tf.keras.Model:
     """
     Build LightNetV2 - a slightly larger yet still efficient network.
     
@@ -221,14 +223,19 @@ def build_lightnet_v2(input_shape: Tuple[int, int, int] = (224, 224, 3),
         input_shape: Input tensor shape.
         num_classes: Number of output classes.
         dropout_rate: Dropout rate before the dense classifier.
+        use_se: Whether to include squeeze-and-excitation.
+        channel_multiplier: Width multiplier for scaling channels.
     
     Returns:
         Configured Keras Model instance named LightNetV2.
     """
     inputs = keras.layers.Input(shape=input_shape, name="input")
     
+    def _scale(c):
+        return max(8, int(round(c * channel_multiplier)))
+    
     x = keras.layers.Conv2D(
-        filters=32,
+        filters=_scale(32),
         kernel_size=3,
         strides=2,
         padding="same",
@@ -238,7 +245,7 @@ def build_lightnet_v2(input_shape: Tuple[int, int, int] = (224, 224, 3),
     x = keras.layers.BatchNormalization(name="stem_bn")(x)
     x = keras.layers.LeakyReLU(alpha=0.1, name="stem_activation")(x)
     
-    channels = [32, 64, 128, 192]
+    channels = [_scale(c) for c in [32, 64, 128, 192]]
     strides = [(1, 1), (2, 2), (2, 2), (2, 2)]
     dropouts = [0.1, 0.15, 0.2, 0.25]
     
@@ -248,7 +255,7 @@ def build_lightnet_v2(input_shape: Tuple[int, int, int] = (224, 224, 3),
             kernel_size=(3, 3),
             strides=stride,
             dropout_rate=dr,
-            use_se=True,
+            use_se=use_se,
             name=f"lite_dr2_{idx}",
         )(x)
     
@@ -273,6 +280,8 @@ class LightNetV2(keras.Model):
                  input_shape: Tuple[int, int, int] = (224, 224, 3),
                  num_classes: int = 4,
                  dropout_rate: float = 0.2,
+                 use_se: bool = True,
+                 channel_multiplier: float = 1.0,
                  name: str = "LightNetV2",
                  **kwargs):
         """
@@ -282,6 +291,8 @@ class LightNetV2(keras.Model):
             input_shape: Input image shape
             num_classes: Number of output classes
             dropout_rate: Dropout rate
+            use_se: Whether to include squeeze-and-excitation in mobile blocks
+            channel_multiplier: Width multiplier for scaling filters
             name: Model name
         """
         super().__init__(name=name, **kwargs)
@@ -289,13 +300,19 @@ class LightNetV2(keras.Model):
         self.input_shape_ = input_shape
         self.num_classes = num_classes
         self.dropout_rate = dropout_rate
+        self.use_se = use_se
+        self.channel_multiplier = channel_multiplier
         
         # Input layer
         self.input_layer = keras.layers.Input(shape=input_shape, name="input")
         
+        # Helper to scale channels while keeping a reasonable floor
+        def _scale(c):
+            return max(8, int(round(c * channel_multiplier)))
+        
         # Very lightweight stem
         self.stem = keras.layers.Conv2D(
-            filters=16,
+            filters=_scale(16),
             kernel_size=3,
             strides=2,
             padding='same',
@@ -306,10 +323,11 @@ class LightNetV2(keras.Model):
         self.stem_activation = keras.layers.ReLU(name="stem_activation")
         
         # MobileNet-style blocks
-        self.mobile_block1 = self._make_mobile_block(24, 1, name="mobile1")
-        self.mobile_block2 = self._make_mobile_block(32, 2, name="mobile2")
-        self.mobile_block3 = self._make_mobile_block(48, 2, name="mobile3")
-        self.mobile_block4 = self._make_mobile_block(64, 2, name="mobile4")
+        # Names aligned with teacher "dr_block*" layers for KD feature matching
+        self.mobile_block1 = self._make_mobile_block(_scale(24), 1, name="dr_block1")
+        self.mobile_block2 = self._make_mobile_block(_scale(32), 2, name="dr_block2")
+        self.mobile_block3 = self._make_mobile_block(_scale(48), 2, name="dr_block3")
+        self.mobile_block4 = self._make_mobile_block(_scale(64), 2, name="dr_block4")
         
         # Global pooling
         self.global_pool = keras.layers.GlobalAveragePooling2D(name="global_pool")
@@ -323,7 +341,7 @@ class LightNetV2(keras.Model):
     
     def _make_mobile_block(self, filters, strides, name):
         """Create MobileNet-style block"""
-        return keras.Sequential([
+        layers = [
             keras.layers.DepthwiseConv2D(
                 kernel_size=3,
                 strides=strides,
@@ -340,8 +358,14 @@ class LightNetV2(keras.Model):
                 name=f"{name}_pointwise"
             ),
             keras.layers.BatchNormalization(name=f"{name}_bn2"),
-            keras.layers.ReLU(name=f"{name}_relu2")
-        ], name=name)
+        ]
+        
+        if self.use_se:
+            layers.append(SqueezeExcitation(filters=filters, ratio=4, name=f"{name}_se"))
+        
+        layers.append(keras.layers.ReLU(name=f"{name}_relu2"))
+        
+        return keras.Sequential(layers, name=name)
     
     def _build_model(self):
         """Build the model architecture"""
@@ -375,7 +399,9 @@ class LightNetV2(keras.Model):
         config.update({
             'input_shape': self.input_shape_,
             'num_classes': self.num_classes,
-            'dropout_rate': self.dropout_rate
+            'dropout_rate': self.dropout_rate,
+            'use_se': self.use_se,
+            'channel_multiplier': self.channel_multiplier
         })
         return config
     

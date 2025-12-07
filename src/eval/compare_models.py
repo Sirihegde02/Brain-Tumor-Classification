@@ -127,6 +127,13 @@ def build_model_list(args) -> List[Tuple[str, Path]]:
                 raise ValueError(f"Invalid --models entry '{entry}', expected Name=path")
             name, path = entry.split("=", 1)
             models.append((name.strip(), Path(path.strip())))
+    elif args.names or args.results:
+        if not args.names or not args.results or len(args.names) != len(args.results):
+            raise ValueError(
+                "Provide matching counts for --name and --results (e.g., --name LEAD --results pathA.json --name Light --results pathB.json)."
+            )
+        for name, path in zip(args.names, args.results):
+            models.append((name, Path(path)))
     else:
         if args.name_a and args.results_a and args.name_b and args.results_b:
             models.append((args.name_a, Path(args.results_a)))
@@ -143,6 +150,18 @@ def main():
     parser.add_argument("--name_b", help="Display name for model B.")
     parser.add_argument("--results_b", help="Path to test_metrics.json for model B.")
     parser.add_argument(
+        "--name",
+        dest="names",
+        action="append",
+        help="Display name for a model (repeatable; pair with --results).",
+    )
+    parser.add_argument(
+        "--results",
+        dest="results",
+        action="append",
+        help="Path to test_metrics.json (repeatable; pair with --name).",
+    )
+    parser.add_argument(
         "--models",
         nargs="+",
         help="List of NAME=path entries (e.g., LEAD=outputs/baseline/test_metrics.json).",
@@ -155,6 +174,12 @@ def main():
     args = parser.parse_args()
 
     model_specs = build_model_list(args)
+
+    missing = [(name, path) for name, path in model_specs if not path.exists()]
+    if missing:
+        details = "\n".join(f"  {name}: {path}" for name, path in missing)
+        parser.error(f"Result file(s) not found:\n{details}")
+
     metrics_entries = []
 
     print("Loaded metrics for:")

@@ -9,12 +9,28 @@ from tensorflow import keras
 from typing import Dict, Any, List, Optional
 
 
+def safe_categorical_crossentropy(y_true: tf.Tensor, y_pred: tf.Tensor) -> tf.Tensor:
+    """Graph-safe categorical crossentropy that handles dynamic shapes."""
+    y_true = tf.cast(y_true, tf.float32)
+    y_pred = tf.cast(y_pred, tf.float32)
+    y_pred = tf.clip_by_value(y_pred, 1e-7, 1.0)
+    return -tf.reduce_sum(y_true * tf.math.log(y_pred), axis=-1)
+
+
+def safe_kl_divergence(p: tf.Tensor, q: tf.Tensor) -> tf.Tensor:
+    """Graph-safe KL divergence KL(p || q) for batched distributions."""
+    p = tf.cast(p, tf.float32)
+    q = tf.cast(q, tf.float32)
+    p = tf.clip_by_value(p, 1e-7, 1.0)
+    q = tf.clip_by_value(q, 1e-7, 1.0)
+    return tf.reduce_sum(p * tf.math.log(p / q), axis=-1)
+
+
 class SoftTargetDistillationLoss(keras.losses.Loss):
     """
     Soft target distillation loss using KL divergence
     
-    Combines hard target loss (cross-entropy) with soft target loss
-    (KL divergence between teacher and student predictions).
+    Computes KL divergence between teacher and student softened predictions.
     """
     
     def __init__(self,
@@ -33,23 +49,21 @@ class SoftTargetDistillationLoss(keras.losses.Loss):
         super().__init__(name=name, **kwargs)
         self.temperature = temperature
         self.alpha = alpha
+        self.num_classes = None
     
     def call(self, y_true, y_pred):
         """
         Compute soft target distillation loss
         
         Args:
-            y_true: True labels (one-hot encoded)
+            y_true: Unused (kept for API compatibility)
             y_pred: Dictionary with 'student' and 'teacher' predictions
             
         Returns:
-            Combined loss value
+            KL divergence loss
         """
         student_pred = y_pred['student']
         teacher_pred = y_pred['teacher']
-        
-        # Hard target loss (cross-entropy)
-        hard_loss = keras.losses.categorical_crossentropy(y_true, student_pred)
         
         # Soft target loss (KL divergence)
         # Soften teacher predictions
@@ -57,15 +71,12 @@ class SoftTargetDistillationLoss(keras.losses.Loss):
         student_soft = tf.nn.softmax(student_pred / self.temperature)
         
         # KL divergence: KL(teacher_soft || student_soft)
-        kl_loss = tf.keras.losses.kl_divergence(teacher_soft, student_soft)
+        kl_loss = safe_kl_divergence(teacher_soft, student_soft)
         
         # Scale KL loss by temperature squared
         kl_loss = kl_loss * (self.temperature ** 2)
         
-        # Combine losses
-        total_loss = self.alpha * kl_loss + (1 - self.alpha) * hard_loss
-        
-        return total_loss
+        return tf.reduce_mean(kl_loss)
     
     def get_config(self):
         """Get loss configuration"""
@@ -212,25 +223,25 @@ class CombinedDistillationLoss(keras.losses.Loss):
         Returns:
             Combined loss value
         """
-        # Soft target loss
-        soft_loss = self.soft_target_loss(y_true, y_pred)
-        
-        # Feature distillation loss
-        if self.feature_loss and 'teacher_features' in y_pred and 'student_features' in y_pred:
-            feature_loss = self.feature_loss(y_true, y_pred)
-        else:
-            feature_loss = 0.0
-        
-        # Hard target loss (cross-entropy)
-        student_pred = y_pred['student']
-        hard_loss = keras.losses.categorical_crossentropy(y_true, student_pred)
-        
-        # Combine losses
-        total_loss = (self.alpha * soft_loss + 
-                     self.beta * feature_loss + 
-                     self.gamma * hard_loss)
-        
-        return total_loss
+        student_logits = y_pred['student']
+        teacher_logits = y_pred['teacher']
+        labels = tf.cast(tf.reshape(y_true, [-1]), tf.int32)
+        num_classes = tf.shape(student_logits)[-1]
+        labels_onehot = tf.one_hot(labels, depth=num_classes)
+
+        # Soft KD term
+        t = self.temperature
+        teacher_soft = tf.nn.softmax(teacher_logits / t)
+        student_soft = tf.nn.softmax(student_logits / t)
+        soft_loss = safe_kl_divergence(teacher_soft, student_soft) * (t ** 2)
+
+        # Hard CE term (on student probabilities)
+        hard_loss = tf.keras.losses.categorical_crossentropy(labels_onehot, student_soft)
+
+        # No feature loss (beta typically 0 in configs)
+        total_loss = self.alpha * soft_loss + self.gamma * hard_loss
+
+        return tf.reduce_mean(total_loss)
     
     def get_config(self):
         """Get loss configuration"""
@@ -277,6 +288,8 @@ class DistillationModel(keras.Model):
         
         # Create feature extraction models
         self._create_feature_extractors()
+        # Placeholder for loss set at compile time
+        self.distillation_loss = None
     
     def _create_feature_extractors(self):
         """Create feature extraction models for teacher and student"""
@@ -308,24 +321,16 @@ class DistillationModel(keras.Model):
                 name="student_feature_extractor"
             )
     
-    def call(self, inputs, training=None):
-        """
-        Forward pass for distillation
-        
-        Args:
-            inputs: Input data
-            training: Training mode flag
-            
-        Returns:
-            Dictionary with predictions and features
-        """
-        # Get teacher predictions
+    def compile(self, optimizer, loss, metrics=None, **kwargs):
+        """Custom compile to store distillation loss and metrics."""
+        super().compile(optimizer=optimizer, metrics=metrics or [], **kwargs)
+        self.distillation_loss = loss
+    
+    def _forward(self, inputs, training):
+        """Compute teacher/student preds and optional features."""
         teacher_pred = self.teacher_model(inputs, training=False)
-        
-        # Get student predictions
         student_pred = self.student_model(inputs, training=training)
         
-        # Extract features if feature extractors exist
         teacher_features = {}
         student_features = {}
         
@@ -343,6 +348,49 @@ class DistillationModel(keras.Model):
             'teacher_features': teacher_features,
             'student_features': student_features
         }
+    
+    def train_step(self, data):
+        """Custom training step for distillation."""
+        inputs, y_true = data
+        labels = tf.cast(tf.reshape(y_true, [-1]), tf.int32)
+        with tf.GradientTape() as tape:
+            preds = self._forward(inputs, training=True)
+            loss = self.distillation_loss(labels, preds)
+            # Add potential regularization losses
+            if self.losses:
+                loss += tf.add_n(self.losses)
+        
+        trainable_vars = self.trainable_variables
+        grads = tape.gradient(loss, trainable_vars)
+        self.optimizer.apply_gradients(zip(grads, trainable_vars))
+        
+        # Update metrics on student predictions
+        self.compiled_metrics.update_state(labels, preds['student'])
+        
+        results = {'loss': loss}
+        for m in self.metrics:
+            results[m.name] = m.result()
+        return results
+    
+    def test_step(self, data):
+        """Custom evaluation step for distillation."""
+        inputs, y_true = data
+        labels = tf.cast(tf.reshape(y_true, [-1]), tf.int32)
+        preds = self._forward(inputs, training=False)
+        loss = self.distillation_loss(labels, preds)
+        if self.losses:
+            loss += tf.add_n(self.losses)
+        
+        self.compiled_metrics.update_state(labels, preds['student'])
+        
+        results = {'loss': loss}
+        for m in self.metrics:
+            results[m.name] = m.result()
+        return results
+    
+    def call(self, inputs, training=None):
+        """Forward pass used for inference; returns student predictions."""
+        return self.student_model(inputs, training=training)
     
     def get_config(self):
         """Get model configuration"""

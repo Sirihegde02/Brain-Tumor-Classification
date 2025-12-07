@@ -1,0 +1,88 @@
+# LightNet V2 KD - tuned for higher accuracy
+
+# Model configuration
+model:
+  input_shape: [224, 224, 3]
+  num_classes: 4
+  version: "v2"
+  dropout_rate: 0.35
+  use_se: true
+  channel_multiplier: 1.0
+
+# Data configuration
+data:
+  batch_size: 32
+  image_size: [224, 224]
+  augmentation:
+    horizontal_flip: true
+    vertical_flip: false
+    rotation_range: 12.0
+    zoom_range: 0.1
+    brightness_range: 0.1
+    contrast_range: 0.1
+    noise_std: 0.01
+
+# Training configuration
+training:
+  epochs: 120
+  optimizer:
+    type: "adamw"
+    learning_rate: 0.0007
+    weight_decay: 0.01
+    beta_1: 0.9
+    beta_2: 0.999
+  loss: "categorical_crossentropy"
+  label_smoothing: 0.05
+  use_class_weights: true
+  monitor: "val_loss"
+  monitor_mode: "min"
+  
+  # Early stopping
+  early_stopping:
+    enabled: true
+    patience: 18
+    
+  # Learning rate scheduler
+  lr_scheduler:
+    enabled: true
+    type: "cosine"
+    first_decay_steps: 60
+    t_mul: 2.0
+    m_mul: 1.0
+    alpha: 0.0
+    
+  # TensorBoard
+  tensorboard:
+    enabled: true
+
+# Knowledge distillation configuration
+distillation:
+  temperature: 4.0   # Softer teacher logits
+  alpha: 0.55        # Soft target weight
+  beta: 0.0          # Feature distillation weight (disabled to avoid channel mismatch)
+  gamma: 0.45        # Hard label weight
+  
+  # Feature layers for distillation
+  feature_layers: []
+  
+  # Feature layer weights
+  feature_weights: []
+
+# Evaluation configuration
+evaluation:
+  metrics:
+    - "accuracy"
+    - "precision"
+    - "recall"
+    - "f1"
+    - "cohen_kappa"
+    - "roc_auc"
+  
+  # GradCAM visualization
+  gradcam:
+    enabled: true
+    num_samples_per_class: 2
+    layer_name: null  # Auto-detect last conv layer
+  
+  # Model comparison
+  compare_with_teacher: true
