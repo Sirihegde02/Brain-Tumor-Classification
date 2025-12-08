@@ -116,56 +116,53 @@ class BrainTumorTransforms:
                                     self.aug_config["rotation_range"])
             image = tf.image.rot90(image, k=tf.cast(angle / 90, tf.int32))
         
-        # Random zoom (dtype-safe version)
-        if self.aug_config["zoom_range"] > 0:
-            # Get image dimensions as int32
-            h = tf.shape(image)[0]  # int32
-            w = tf.shape(image)[1]  # int32
-            
-            # Sample zoom factor z ~ Uniform(1-zoom_range, 1+zoom_range)
-            z = tf.random.uniform([], 
-                                1.0 - self.aug_config["zoom_range"],
-                                1.0 + self.aug_config["zoom_range"])
-            
-            # Branch based on zoom direction
-            def zoom_in():
-                # z <= 1: zoom-in (crop center then resize)
-                frac = tf.clip_by_value(z, 1e-3, 1.0)  # central_fraction must be in (0, 1]
-                cropped = tf.image.central_crop(image, central_fraction=frac)
-                return tf.image.resize(cropped, (h, w))
-            
-            def zoom_out():
-                # z > 1: zoom-out (resize larger then crop/pad back)
-                # Compute new sizes in float, then cast to int32
-                nh = tf.cast(tf.round(tf.cast(h, tf.float32) * z), tf.int32)
-                nw = tf.cast(tf.round(tf.cast(w, tf.float32) * z), tf.int32)
-                resized = tf.image.resize(image, (nh, nw))
-                return tf.image.resize_with_crop_or_pad(resized, h, w)
-            
-            # Conditional: if z <= 1.0 use zoom_in, else zoom_out
-            image = tf.cond(z <= 1.0, zoom_in, zoom_out)
+        # # Random zoom (dtype-safe version)
+        # if self.aug_config["zoom_range"] > 0:
+        #     h = tf.shape(image)[0]
+        #     w = tf.shape(image)[1]
+
+        #     z = tf.random.uniform(
+        #         [],
+        #         1.0 - self.aug_config["zoom_range"],
+        #         1.0 + self.aug_config["zoom_range"]
+        #     )
+
+        #     def zoom_in():
+        #         # z < 1: crop a smaller central region (fraction < 1)
+        #         frac = z  # not 1.0 / z
+        #         frac = tf.clip_by_value(frac, 0.0 + 1e-3, 1.0)
+        #         cropped = tf.image.central_crop(image, central_fraction=frac)
+        #         return tf.image.resize(cropped, (h, w))
+
+        #     def zoom_out():
+        #         nh = tf.cast(tf.round(tf.cast(h, tf.float32) * z), tf.int32)
+        #         nw = tf.cast(tf.round(tf.cast(w, tf.float32) * z), tf.int32)
+        #         resized = tf.image.resize(image, (nh, nw))
+        #         return tf.image.resize_with_crop_or_pad(resized, h, w)
+
+        #     image = tf.cond(z <= 1.0, zoom_in, zoom_out)
         
-        # Random brightness
-        if self.aug_config["brightness_range"] > 0:
-            delta = tf.random.uniform([], 
-                                    -self.aug_config["brightness_range"],
-                                    self.aug_config["brightness_range"])
-            image = tf.image.adjust_brightness(image, delta)
+        # # Random brightness
+        # if self.aug_config["brightness_range"] > 0:
+        #     delta = tf.random.uniform([], 
+        #                             -self.aug_config["brightness_range"],
+        #                             self.aug_config["brightness_range"])
+        #     image = tf.image.adjust_brightness(image, delta)
         
-        # Random contrast
-        if self.aug_config["contrast_range"] > 0:
-            contrast_factor = tf.random.uniform([], 
-                                              1 - self.aug_config["contrast_range"],
-                                              1 + self.aug_config["contrast_range"])
-            image = tf.image.adjust_contrast(image, contrast_factor)
+        # # Random contrast
+        # if self.aug_config["contrast_range"] > 0:
+        #     contrast_factor = tf.random.uniform([], 
+        #                                       1 - self.aug_config["contrast_range"],
+        #                                       1 + self.aug_config["contrast_range"])
+        #     image = tf.image.adjust_contrast(image, contrast_factor)
         
-        # Add noise
-        if self.aug_config["noise_std"] > 0:
-            noise = tf.random.normal(tf.shape(image), 0, self.aug_config["noise_std"])
-            image = image + noise
+        # # Add noise
+        # if self.aug_config["noise_std"] > 0:
+        #     noise = tf.random.normal(tf.shape(image), 0, self.aug_config["noise_std"])
+        #     image = image + noise
         
-        # Ensure values are in [0, 1]
-        image = tf.clip_by_value(image, 0.0, 1.0)
+        # # Ensure values are in [0, 1]
+        # image = tf.clip_by_value(image, 0.0, 1.0)
         
         return image
     
@@ -231,7 +228,7 @@ class BrainTumorTransforms:
         return dataset
 
 
-def create_data_generators(splits_file: str = "src/data/splits.json",
+def create_data_generators(splits_file: str = "data/splits.json",
                           batch_size: int = 32,
                           image_size: Tuple[int, int] = (224, 224),
                           augmentation_config: Optional[Dict[str, Any]] = None) -> Dict[str, tf.data.Dataset]:

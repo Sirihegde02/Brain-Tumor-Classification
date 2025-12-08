@@ -20,7 +20,13 @@ sys.path.append(str(Path(__file__).parent.parent))
 from models.lightnet import create_lightnet
 from data.transforms import create_data_generators, get_class_weights
 from utils.seed import set_seed
-from utils.io import save_model, save_history, create_checkpoint_callback, create_tensorboard_callback
+from utils.io import (
+    save_model,
+    save_history,
+    create_checkpoint_callback,
+    create_tensorboard_callback,
+    save_model_summary,
+)
 from utils.params import count_parameters, print_model_summary, analyze_model_complexity
 
 
@@ -68,109 +74,80 @@ def create_model(config, version="v1"):
     
     return model
 
-
 def compile_model(model, config):
     """Compile model with optimizer and loss"""
     # Optimizer
-    if config['training']['optimizer']['type'] == 'adam':
+    opt_cfg = config['training']['optimizer']
+    opt_type = opt_cfg['type']
+
+    if opt_type == 'adam':
         optimizer = keras.optimizers.Adam(
-            learning_rate=config['training']['optimizer']['learning_rate'],
-            beta_1=config['training']['optimizer'].get('beta_1', 0.9),
-            beta_2=config['training']['optimizer'].get('beta_2', 0.999)
+            learning_rate=opt_cfg['learning_rate'],
+            beta_1=opt_cfg.get('beta_1', 0.9),
+            beta_2=opt_cfg.get('beta_2', 0.999),
         )
-    elif config['training']['optimizer']['type'] == 'adamw':
+    elif opt_type == 'adamw':
         optimizer = keras.optimizers.AdamW(
-            learning_rate=config['training']['optimizer']['learning_rate'],
-            weight_decay=config['training']['optimizer'].get('weight_decay', 0.01)
+            learning_rate=opt_cfg['learning_rate'],
+            weight_decay=opt_cfg.get('weight_decay', 0.01),
         )
-    elif config['training']['optimizer']['type'] == 'sgd':
+    elif opt_type == 'sgd':
         optimizer = keras.optimizers.SGD(
-            learning_rate=config['training']['optimizer']['learning_rate'],
-            momentum=config['training']['optimizer'].get('momentum', 0.9),
-            nesterov=config['training']['optimizer'].get('nesterov', True)
+            learning_rate=opt_cfg['learning_rate'],
+            momentum=opt_cfg.get('momentum', 0.9),
+            nesterov=opt_cfg.get('nesterov', True),
         )
     else:
-        raise ValueError(f"Unknown optimizer: {config['training']['optimizer']['type']}")
-    
-    # Loss function
-    if config['training']['loss'] == 'categorical_crossentropy':
-        loss = keras.losses.CategoricalCrossentropy(
-            label_smoothing=config['training'].get('label_smoothing', 0.0)
-        )
-    else:
-        loss = config['training']['loss']
-    
-    # Metrics
+        raise ValueError(f"Unknown optimizer: {opt_type}")
+
+    # LOSS: generators emit integer class indices → use sparse CE
+    loss = keras.losses.SparseCategoricalCrossentropy()
+
+    # METRICS: use sparse accuracy so it matches integer labels
     metrics = [
-        keras.metrics.CategoricalAccuracy(name='accuracy'),
-        keras.metrics.Precision(name='precision'),
-        keras.metrics.Recall(name='recall'),
-        keras.metrics.AUC(name='auc')
+        keras.metrics.SparseCategoricalAccuracy(name="accuracy"),
     ]
-    
-    # Compile model
+
     model.model.compile(
         optimizer=optimizer,
         loss=loss,
-        metrics=metrics
+        metrics=metrics,
     )
-    
+
     return model
 
 
 def create_callbacks(config, output_dir, model_name):
-    """Create training callbacks"""
     callbacks = []
-    
-    # Model checkpoint
-    checkpoint_path = Path(output_dir) / "checkpoints" / f"{model_name}_best.h5"
-    checkpoint_callback = create_checkpoint_callback(
-        filepath=checkpoint_path,
-        monitor=config['training']['monitor'],
-        mode=config['training']['monitor_mode'],
+
+    checkpoint_dir = os.path.join(output_dir, "checkpoints")
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    checkpoint_path = os.path.join(checkpoint_dir, f"{model_name}_best.h5")
+
+    checkpoint_cb = keras.callbacks.ModelCheckpoint(
+        checkpoint_path,
+        monitor="val_loss",
         save_best_only=True,
-        save_weights_only=False
+        verbose=1,
     )
-    callbacks.append(checkpoint_callback)
-    
-    # Early stopping
-    if config['training'].get('early_stopping', {}).get('enabled', True):
-        early_stopping = keras.callbacks.EarlyStopping(
-            monitor=config['training']['monitor'],
-            mode=config['training']['monitor_mode'],
-            patience=config['training']['early_stopping']['patience'],
-            restore_best_weights=True,
-            verbose=1
-        )
-        callbacks.append(early_stopping)
-    
-    # Learning rate scheduler
-    if config['training'].get('lr_scheduler', {}).get('enabled', False):
-        if config['training']['lr_scheduler']['type'] == 'reduce_on_plateau':
-            lr_scheduler = keras.callbacks.ReduceLROnPlateau(
-                monitor=config['training']['monitor'],
-                mode=config['training']['monitor_mode'],
-                factor=config['training']['lr_scheduler']['factor'],
-                patience=config['training']['lr_scheduler']['patience'],
-                min_lr=config['training']['lr_scheduler']['min_lr'],
-                verbose=1
-            )
-            callbacks.append(lr_scheduler)
-        elif config['training']['lr_scheduler']['type'] == 'cosine':
-            lr_scheduler = keras.callbacks.CosineRestartScheduler(
-                first_decay_steps=config['training']['lr_scheduler']['first_decay_steps'],
-                t_mul=config['training']['lr_scheduler'].get('t_mul', 2.0),
-                m_mul=config['training']['lr_scheduler'].get('m_mul', 1.0),
-                alpha=config['training']['lr_scheduler'].get('alpha', 0.0)
-            )
-            callbacks.append(lr_scheduler)
-    
-    # TensorBoard
-    if config['training'].get('tensorboard', {}).get('enabled', True):
-        tensorboard_dir = Path(output_dir) / "logs" / model_name
-        tensorboard_callback = create_tensorboard_callback(tensorboard_dir)
-        callbacks.append(tensorboard_callback)
-    
+
+    early_stopping_cb = keras.callbacks.EarlyStopping(
+        monitor="val_loss",
+        patience=config["training"].get("early_stopping_patience", 10),
+        restore_best_weights=True,
+        verbose=1,
+    )
+
+    # Optional but nice: standard ReduceLROnPlateau instead of fancy cosine scheduler
+    lr_plateau_cb = keras.callbacks.ReduceLROnPlateau(
+        monitor="val_loss",
+        factor=0.5,
+        patience=3,
+        min_lr=1e-6,
+        verbose=1,
+    )
+
+    callbacks.extend([checkpoint_cb, early_stopping_cb, lr_plateau_cb])
     return callbacks
 
 
@@ -349,14 +326,12 @@ def main():
     # Final evaluation
     print("\nEvaluating on test set...")
     test_results = model.model.evaluate(test_data, verbose=1)
-    
-    print(f"Test Results:")
-    print(f"  Loss: {test_results[0]:.4f}")
-    print(f"  Accuracy: {test_results[1]:.4f}")
-    print(f"  Precision: {test_results[2]:.4f}")
-    print(f"  Recall: {test_results[3]:.4f}")
-    print(f"  AUC: {test_results[4]:.4f}")
-    
+
+    print("Test Results:")
+    loss, acc = test_results  # [loss, accuracy]
+    print(f"  Loss: {loss:.4f}")
+    print(f"  Accuracy: {acc:.4f}")
+
     print("Training completed successfully!")
 
 

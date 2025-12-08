@@ -1,27 +1,27 @@
 # Brain Tumor Lightweight Classifier (LEAD-CNN-inspired)
 
-A comprehensive brain tumor classification system that reproduces the LEAD-CNN baseline and delivers a lightweight LightNetV2 student distilled from the teacher.
+A comprehensive brain tumor classification system that reproduces the LEAD-CNN baseline and creates an over 10× lighter student model using knowledge distillation.
 
 ## 🎯 Project Overview
 
 This project implements a brain tumor classification system with the following goals:
-- **Reproduce LEAD-CNN baseline** on Kaggle Brain Tumor MRI Dataset (4 classes: glioma, meningioma, pituitary, normal)
-- **Create lightweight model** with ≤10% of LEAD-CNN's parameters (target: ≤113k params)
-- **Implement knowledge distillation** for improved performance
-- **Provide comprehensive evaluation** with Cohen's kappa and other metrics
+- Reproduce the LEAD-CNN baseline on the Kaggle Brain Tumor MRI Dataset (4 classes: glioma, meningioma, pituitary, normal)
+- Design a lightweight student model with around 10 percent of LEAD-CNN's parameters (target about 113k parameters)
+- Use knowledge distillation to retain accuracy while reducing model size
+- Provide comprehensive evaluation with Cohen's kappa and other metrics
 
 ## 📊 Dataset
 
 - **Source**: [Kaggle "Brain Tumor MRI Dataset"](https://www.kaggle.com/sartajbhuvaji/brain-tumor-classification-mri)
 - **Classes**: 4 (glioma, meningioma, pituitary, normal)
-- **Images**: ~7,023 total
-- **Input size**: 224×224 RGB
-- **Splits**: Train 65% / Val 15% / Test 20% (stratified)
+- **Images**: about 7023 total
+- **Input size**: 224 × 224 RGB
+- **Splits**: Train 65 percent, validation 15 percent, test 20 percent (stratified)
 
 ## 🏗️ Project Structure
 
-```
-brain-tumor-lightnet/
+```text
+Brain-Tumor-Classification/
 ├── README.md
 ├── requirements.txt
 ├── setup.py
@@ -30,39 +30,46 @@ brain-tumor-lightnet/
 │   ├── data/
 │   │   ├── download_kaggle.py      # Dataset download
 │   │   ├── prepare_splits.py       # Stratified data splitting
-│   │   └── transforms.py           # Data augmentation
+│   │   └── transforms.py           # Data augmentation and preprocessing
 │   ├── models/
 │   │   ├── lead_cnn.py             # LEAD-CNN implementation
-│   │   ├── lightnet.py             # LightNet implementation
+│   │   ├── lightnet.py             # LightNet and LightNetV2
 │   │   ├── blocks.py               # Custom blocks
-│   │   └── kd_losses.py            # Knowledge distillation
+│   │   └── kd_losses.py            # Knowledge distillation losses
 │   ├── train/
 │   │   ├── train_baseline.py       # LEAD-CNN training
-│   │   ├── train_lightnet.py       # LightNet training
+│   │   ├── train_lightnet.py       # LightNet training and ablations
 │   │   └── train_kd.py             # Knowledge distillation
 │   ├── eval/
-│   │   ├── evaluate.py             # Model evaluation
-│   │   ├── metrics.py              # Evaluation metrics
-│   │   └── confusion.py            # Confusion matrix
+│   │   ├── evaluate.py             # Model evaluation and comparison
+│   │   ├── metrics.py              # Metrics helper class
+│   │   └── confusion.py            # Confusion matrix utilities
 │   ├── viz/
 │   │   ├── plot_arch.py            # Architecture diagrams
 │   │   └── gradcam.py              # GradCAM visualization
 │   └── utils/
 │       ├── seed.py                 # Reproducibility
 │       ├── io.py                   # I/O utilities
-│       └── params.py               # Parameter counting
+│       └── params.py               # Parameter counting and summaries
 ├── experiments/
-│   ├── baseline_leadcnn.yaml      # LEAD-CNN config
-│   ├── lightnet_ablation.yaml     # LightNet config
-│   ├── lightnet_v2_kd_final.yaml  # Final LightNetV2 KD config (≈121k params)
-│   └── kd.yaml                    # Legacy KD config
+│   ├── baseline_leadcnn.yaml       # LEAD-CNN config
+│   ├── lightnet_ablation.yaml      # LightNet v1 config + ablations
+│   └── lightnet_v2_kd_final.yaml   # Final KD setup for LightNetV2
 ├── examples/
 │   └── quick_start.py              # Quick start example
 └── outputs/
-    ├── checkpoints/                 # Model checkpoints
-    ├── logs/                        # Training logs
-    ├── figures/                    # Visualizations
-    └── reports/                     # Evaluation reports
+    ├── baseline_leadcnn/
+    │   ├── checkpoints/            # Teacher checkpoints
+    │   ├── logs/                   # Training logs
+    │   └── reports/                # Baseline reports
+    ├── lightnet_ablation/
+    │   ├── checkpoints/            # LightNet v1 checkpoints
+    │   ├── logs/                   # LightNet v1 logs
+    │   └── reports/                # Ablation study results
+    └── lightnet_v2_kd_final/
+        ├── checkpoints/            # KD wrapper and student checkpoints
+        ├── logs/                   # KD logs
+        └── reports/                # KD comparison reports
 ```
 
 ## 🚀 Quick Start
@@ -72,12 +79,12 @@ brain-tumor-lightnet/
 ```bash
 # Clone the repository
 git clone <repository-url>
-cd brain-tumor-lightnet
+cd Brain-Tumor-Classification
 
 # Install dependencies
 pip install -r requirements.txt
 
-# Setup project
+# Install package in editable mode
 python -m pip install -e .
 ```
 
@@ -87,7 +94,7 @@ python -m pip install -e .
 # Download dataset (requires Kaggle API setup)
 python src/data/download_kaggle.py
 
-# Prepare stratified splits
+# Prepare stratified splits (writes src/data/splits.json)
 python src/data/prepare_splits.py --create_csv
 ```
 
@@ -95,17 +102,22 @@ python src/data/prepare_splits.py --create_csv
 
 ```bash
 # Train LEAD-CNN baseline
-python src/train/train_baseline.py --config experiments/baseline_leadcnn.yaml
+python src/train/train_baseline.py \
+  --config experiments/baseline_leadcnn.yaml \
+  --splits_file src/data/splits.json \
+  --output_dir outputs/baseline_leadcnn
 
-# Train LightNetV2 (lightweight baseline)
-python src/train/train_baseline.py --config experiments/lightnet_v2.yaml \
-  --splits_file src/data/splits.json --output_dir outputs/lightnet_v2
+# Train LightNet v1 + run ablation study
+python src/train/train_lightnet.py \
+  --config experiments/lightnet_ablation.yaml \
+  --splits_file src/data/splits.json \
+  --output_dir outputs/lightnet_ablation
 
-# Distill LightNetV2 (full ~120k params) from frozen LEAD-CNN teacher
+# Train LightNetV2 with knowledge distillation (final setup)
 python src/train/train_kd.py \
   --config experiments/lightnet_v2_kd_final.yaml \
-  --splits_file src/data/splits.json \
   --teacher_path outputs/baseline_leadcnn/checkpoints/lead_cnn_best.h5 \
+  --splits_file src/data/splits.json \
   --output_dir outputs/lightnet_v2_kd_final
 
 ```
@@ -113,27 +125,20 @@ python src/train/train_kd.py \
 ### 4. Evaluation
 
 ```bash
-# Evaluate all models
 python src/eval/evaluate.py \
-    --model_paths outputs/checkpoints/lead_cnn_best.h5 outputs/checkpoints/lightnet_best.h5 outputs/checkpoints/lightnet_kd_best.h5 \
-    --model_names LEAD-CNN LightNet KD-LightNet \
-    --compare --generate_gradcam
-
-# Evaluate LEAD-CNN baseline with detailed classification metrics
-python src/eval/metrics.py \
-    --model_path outputs/baseline_leadcnn/checkpoints/lead_cnn_best.h5 \
-    --splits_file src/data/splits.json \
-    --batch_size 32 \
-    --image_size 224 224 \
-    --output_json outputs/baseline_leadcnn/test_metrics.json
-
-# Compare baseline, LightNetV2, and LightNetV2-KD runs
-python src/eval/compare_models.py \
-    --models \
-        LEAD_CNN=outputs/baseline_leadcnn/test_metrics.json \
-        LightNetV2=outputs/lightnet_v2/test_metrics.json \
-        LightNetV2_KD=outputs/lightnet_v2_kd/test_metrics.json
+  --model_paths outputs/baseline_leadcnn/checkpoints/lead_cnn_best.h5 \
+  --model_names LEAD-CNN \
+  --splits_file src/data/splits.json \
+  --output_dir outputs/final_eval \
+  --compare
 ```
+
+#### This produces:
+- Metrics JSON: outputs/final_eval/reports/LEAD-CNN_metrics.json
+- Confusion matrix: outputs/final_eval/figures/LEAD-CNN_confusion_matrix.png
+- Confusion analysis: outputs/final_eval/reports/LEAD-CNN_confusion_analysis.json
+
+Multi-model comparison and KD student evaluation are available once all compatible checkpoints are trained under the same architecture. See src/eval/evaluate.py --help for more options.
 
 ### 5. Using Makefile (Recommended)
 
@@ -152,19 +157,20 @@ make report        # Generate final report
 
 ## 📈 Model Performance
 
-| Model                | Params     | Test Acc | Top-2 | Notes                                        |
-|----------------------|-----------:|---------:|------:|----------------------------------------------|
-| LEAD-CNN (teacher)   | 1,970,404  | 0.9388   | 0.9943| `outputs/baseline_leadcnn/*`                 |
-| LightNetV2 KD (final)| 120,940    | 0.8043   | 0.9520| Distilled from LEAD-CNN (retention ~85.7%)   |
+| Model         | Params    | Test Accuracy | F1 (macro) | Cohen kappa | ROC AUC (macro) |
+| ------------- | --------- | ------------- | ---------- | ----------- | --------------- |
+| LEAD-CNN      | 1,970,404 | 0.9388        | 0.9368     | 0.9182      | 0.9931          |
+| LightNet v1   | 221,364   | 0.3295        | –          | –           | –               |
+| LightNetV2 KD | 120,940   | 0.8043        | –          | –           | –               |
 
-Final KD artifacts: `outputs/lightnet_v2_kd_final/checkpoints/lightnet_kd_best.h5` (KD wrapper) and `lightnet_kd_student_best.h5` (student head, Keras 3)
+LightNetV2 KD achieves about 93.9 percent parameter reduction compared to LEAD-CNN (1.97M to about 121k) while retaining roughly 85.7 percent of the baseline accuracy.
 
 ## 🔧 Key Features
 
 ### Models
-- **LEAD-CNN**: Faithful reproduction with dimension-reduction blocks and LeakyReLU
-- **LightNet V2 (full)**: ~121k params, MobileNet-style blocks with SE and channel multiplier
-- **Knowledge Distillation**: Soft-target KD (alpha * KL(T) + gamma * CE), no feature loss in final setup
+- **LEAD-CNN**: Teacher model based on dimension-reduction blocks and LeakyReLU activation with about 2M parameters.
+- **LightNet**: Lightweight convolutional model using depthwise separable blocks and channel multipliers. Used to explore parameter and accuracy tradeoffs.
+- **LightNetV2 KD (student)**: Distilled student model trained from LEAD-CNN using a combination of hard labels and soft teacher logits.
 
 ### Evaluation
 - **Comprehensive Metrics**: Accuracy, Precision, Recall, F1, Cohen's kappa, ROC-AUC
@@ -178,11 +184,18 @@ Final KD artifacts: `outputs/lightnet_v2_kd_final/checkpoints/lightnet_kd_best.h
 
 ## 🧪 Ablation Studies
 
-The project includes comprehensive ablation studies for LightNet:
-- **Squeeze-and-Excitation**: With/without SE blocks
-- **Channel Multipliers**: Different channel width scaling
-- **Dropout Rates**: Regularization analysis
-- **Architecture Variants**: V1 vs V2 comparisons
+LightNet v1 ablation studies are implemented in train_lightnet.py and controlled by experiments/lightnet_ablation.yaml.
+
+Current ablations include:
+- **Squeeze and Excitation (SE) usage**: `use_se` in `{True, False}`
+- **Channel multiplier**: `channel_multiplier` in `{0.5, 0.75, 1.0, 1.25}`
+- **Dropout rate**: `dropout_rate` in `{0.1, 0.2, 0.3, 0.4}`
+
+The script writes parameter counts and model sizes for each configuration to:
+
+```bash
+outputs/lightnet_ablation/reports/ablation_study.json
+```
 
 ## 📊 Evaluation Metrics
 
@@ -206,25 +219,30 @@ The project includes comprehensive ablation studies for LightNet:
 ### Current Limitations
 - **Data Diversity**: Limited to single dataset; multi-site validation needed
 - **External Validation**: Cross-dataset evaluation on GI endoscopy data (optional)
-- **Deployment**: Model optimization for on-device inference
+- **Deployment**: No full on-device deployment pipeline in this repository
 - **Leakage Prevention**: Improved split protocols for clinical deployment
 
 ### Future Work
-- **Multi-site Validation**: Cross-institutional dataset evaluation
+- **Multi-site Validation**: Cross-dataset and multi-site validation on other brain MRI datasets
 - **Real-time Inference**: Model optimization for clinical deployment
 - **Uncertainty Quantification**: Bayesian approaches for confidence estimation
 - **Federated Learning**: Privacy-preserving multi-site training
 
 ## 🛠️ Requirements
 
-- **Python**: 3.8+
-- **TensorFlow**: 2.12+
-- **Keras**: 2.12+
+- **Python**: 3.10–3.11
+- **TensorFlow**: 2.15+ (tested with Apple Metal plugin)
+- **Keras**: 3.x
 - **scikit-learn**: 1.3+
 - **pandas**: 2.0+
 - **matplotlib**: 3.7+
 - **seaborn**: 0.12+
 - **tensorflow-model-optimization**: 0.7+
+
+Install with:
+```bash
+pip install -r requirements.txt
+```
 
 ## 📝 Usage Examples
 
@@ -243,20 +261,21 @@ from src.data.transforms import create_data_generators
 model = create_lead_cnn()
 
 # Load data
-datasets = create_data_generators("data/splits.json")
+datasets = create_data_generators("src/data/splits.json")
 
 # Train model
-model.model.fit(datasets['train'], validation_data=datasets['val'])
+model.model.fit(datasets["train"], validation_data=datasets["val"])
 ```
 
-### Model Evaluation
+### Custom Metrics
 ```python
 from src.eval.metrics import ClassificationMetrics
 
-# Calculate metrics
 metrics_calc = ClassificationMetrics()
 metrics = metrics_calc.calculate_metrics(y_true, y_pred, y_pred_proba)
+
 print(f"Cohen's Kappa: {metrics['cohen_kappa']:.3f}")
+print(f"Macro F1: {metrics['f1_macro']:.3f}")
 ```
 
 ## 📄 License
@@ -280,7 +299,7 @@ If you use this project in your research, please cite:
   title={Brain Tumor Lightweight Classifier},
   author={Siri Hegde},
   year={2025},
-  url={https://github.com/your-username/brain-tumor-lightnet}
+  url={https://github.com/Sirihegde02/Brain-Tumor-Classification}
 }
 ```
 

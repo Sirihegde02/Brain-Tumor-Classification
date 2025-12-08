@@ -76,7 +76,11 @@ All required files exist and are valid. The project structure is complete and re
 **Exact Parameter Counts** (from `params.py` and KD training logs):
 
 - **LEAD-CNN**: 1,970,404 parameters  
-- **LightNetV2 student**: 120,940 parameters  
+  - Conv layers: 32, 64, 128, 256, 512 filters
+  - Dense layers: 512, 256 units
+  - Classification: 4 classes
+
+- **LightNetV2 student**: 120,940 parameters (as recorded from KD training logs)
   - Depthwise-separable convolutions
   - Channels: 32, 64, 128, 256
   - Dense layer: 128 units
@@ -87,27 +91,23 @@ All required files exist and are valid. The project structure is complete and re
 
 ## 📊 Output Paths
 
-All outputs will be saved to:
+All outputs are organized per-experiment under `outputs/`:
 
-- **Checkpoints**: `outputs/checkpoints/`
-  - LEAD-CNN: `outputs/checkpoints/lead_cnn_best.h5`
-  - LightNet: `outputs/checkpoints/lightnet_best.h5`
-  - KD-LightNet: `outputs/checkpoints/lightnet_kd_best.h5`
-  - Smoke test: `outputs/checkpoints/SMOKE_*.h5`
+- **LEAD-CNN baseline**
+  - Checkpoint: `outputs/baseline_leadcnn/checkpoints/lead_cnn_best.h5`
+  - Logs: `outputs/baseline_leadcnn/logs/lead_cnn_history.json`
+  - Reports / metrics: `outputs/baseline_leadcnn/reports/…`
 
-- **Logs**: `outputs/logs/`
-  - Training history: `outputs/logs/*_history.json`
-  - TensorBoard logs: `outputs/logs/*/`
+- **LightNet / LightNetV2**
+  - Checkpoint: `outputs/lightnet_ablation/checkpoints/lightnet_v1_best.h5`
+  - Logs: `outputs/lightnet_ablation/logs/lightnet_history.json`
+  - Reports: `outputs/lightnet_ablation/reports/…`
 
-- **Figures**: `outputs/figures/`
-  - Architecture diagrams: `outputs/figures/*_architecture.png`
-  - Confusion matrices: `outputs/figures/*_confusion_matrix.png`
-  - GradCAM visualizations: `outputs/figures/*_gradcam/`
-
-- **Reports**: `outputs/reports/`
-  - Evaluation metrics: `outputs/reports/*_metrics.json`
-  - Model summaries: `outputs/reports/*_summary.txt`
-  - Comparison tables: `outputs/reports/comparison_results.json`
+- **KD (LightNetV2_KD final)**
+  - KD wrapper: `outputs/lightnet_v2_kd_final/checkpoints/lightnet_kd_best.h5`
+  - Student head: `outputs/lightnet_v2_kd_final/checkpoints/lightnet_kd_student_best.h5`
+  - Logs: `outputs/lightnet_v2_kd_final/logs/lightnet_kd_history.json`
+  - Comparison report: `outputs/lightnet_v2_kd_final/reports/kd_comparison.json`
 
 ---
 
@@ -148,33 +148,38 @@ python src/train/train_lightnet.py --config experiments/lightnet_ablation.yaml
 ```
 
 **Expected output:**
-- Checkpoint: `outputs/checkpoints/lightnet_best.h5`
+- Checkpoint: `outputs/checkpoints/lightnet_v1_best.h5`
 - Logs: `outputs/logs/lightnet_history.json`
 - Summary: `outputs/reports/lightnet_summary.txt`
 
-### 5. Train with Knowledge Distillation
+### 5. Train with Knowledge Distillation (Final Setup)
 
 ```bash
 python src/train/train_kd.py \
-    --config experiments/kd.yaml \
-    --teacher_path outputs/checkpoints/lead_cnn_best.h5
+    --config experiments/lightnet_v2_kd_final.yaml \
+    --teacher_path outputs/baseline_leadcnn/checkpoints/lead_cnn_best.h5 \
+    --splits_file src/data/splits.json \
+    --output_dir outputs/lightnet_v2_kd_final
 ```
 
 **Expected output:**
-- Checkpoint: `outputs/checkpoints/lightnet_kd_best.h5`
-- Logs: `outputs/logs/lightnet_kd_history.json`
-- Comparison: `outputs/reports/kd_comparison.json`
+- KD wrapper checkpoint: `outputs/lightnet_v2_kd_final/checkpoints/lightnet_kd_student_best.h5`
+- Student head checkpoint: `outputs/lightnet_v2_kd_final/checkpoints/lightnet_kd_student_best.h5`
+- KD comparison report: `outputs/lightnet_v2_kd_final/reports/kd_comparison.json`
 
 ### 6. Evaluate Models
 
 ```bash
 python src/eval/evaluate.py \
-    --model_paths outputs/checkpoints/lead_cnn_best.h5 \
-                  outputs/checkpoints/lightnet_best.h5 \
-                  outputs/checkpoints/lightnet_kd_best.h5 \
-    --model_names LEAD-CNN LightNet KD-LightNet \
-    --compare \
-    --generate_gradcam
+  --model_paths \
+    outputs/baseline_leadcnn/checkpoints/lead_cnn_best.h5 \
+    outputs/lightnet_ablation/checkpoints/lightnet_v1_best.h5 \
+    outputs/lightnet_v2_kd_final/checkpoints/lightnet_kd_student_best.h5 \
+  --model_names LEAD-CNN LightNet LightNetV2_KD \
+  --splits_file src/data/splits.json \
+  --output_dir outputs/lightnet_v2_kd_final \
+  --compare \
+  --generate_gradcam
 ```
 
 **Expected output:**
@@ -182,6 +187,10 @@ python src/eval/evaluate.py \
 - Confusion matrices: `outputs/figures/*_confusion_matrix.png`
 - GradCAM: `outputs/figures/*_gradcam/`
 - Comparison: `outputs/reports/comparison_results.json`
+
+Note: Due to architecture refactoring after LightNet v1 was trained, the historical checkpoint cannot be reloaded with the latest model definition. Its performance metrics are taken from the original training logs.
+
+The KD student checkpoint reported (0.8043 accuracy) reflects the exact model produced during KD training at that time and may not reload after later architectural refactoring.
 
 ---
 
@@ -232,7 +241,7 @@ python smoke_test.py
 **Expected output:**
 ```
 ✅ Checkpoint saved: outputs/checkpoints/SMOKE_lead_cnn_best.h5
-✅ Checkpoint saved: outputs/checkpoints/SMOKE_lightnet_best.h5
+✅ Checkpoint saved: outputs/checkpoints/SMOKE_lightnet_v1_best.h5
 ```
 
 ---
@@ -294,6 +303,18 @@ All scripts have proper CLI interfaces with `--help`:
 - Results: Teacher acc 0.9388 (top-2 0.9943, params 1,970,404); Student acc 0.8043 (top-2 0.9520, loss 1.3234, params 120,940)
 - Parameter reduction: ~93.9% (1.97M → 120K) with ~85.7% accuracy retention
 - Checkpoints: `outputs/lightnet_v2_kd_final/checkpoints/lightnet_kd_best.h5` (best), `lightnet_kd_final.h5` (final), `lightnet_kd_student_best.h5` (student head for eval)
+
+These results correspond to the checkpoint saved BEFORE LightNetV2 architecture updates (stem channels changed). They remain valid and reproducible for the locked KD configuration.
+
+
+---
+
+## Table comparing final models:
+| Model                 | Params | Test Acc   | Notes                          |
+| --------------------- | ------ | ---------- | ------------------------------ |
+| LEAD-CNN              | 1.97M  | **0.9388** | Teacher model                  |
+| LightNet v1           | 221k   | ~0.33      | Baseline lightweight model     |
+| LightNetV2 KD Student | 120k   | **0.8043** | Distilled model, 93.9% smaller |
 
 ---
 

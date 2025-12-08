@@ -12,7 +12,7 @@ data:
     horizontal_flip: true
     vertical_flip: false
     rotation_range: 15.0
-    zoom_range: 0.1
+    zoom_range: 0.0
     brightness_range: 0.1
     contrast_range: 0.1
     noise_std: 0.01
@@ -24,13 +24,13 @@ compile:
     - accuracy
 
 training:
-  epochs: 40
+  epochs: 3
   use_class_weights: true
   monitor: "val_accuracy"
   monitor_mode: "max"
   early_stopping:
     enabled: true
-    patience: 8
+    patience: 15
   tensorboard:
     enabled: true
 
