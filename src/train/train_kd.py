@@ -30,6 +30,7 @@ from utils.io import (
     create_tensorboard_callback,
 )
 from utils.params import count_parameters, print_model_summary
+from eval.utils_eval import evaluate_student_on_test
 
 
 def parse_args():
@@ -268,10 +269,6 @@ def save_results(distillation_model, history, config, output_dir):
     model_path = output_path / "checkpoints" / "lightnet_kd_final.h5"
     save_model(distillation_model, model_path)
     
-    # Save student model separately
-    student_path = output_path / "checkpoints" / "lightnet_kd_student.h5"
-    save_model(distillation_model.student_model, student_path)
-    
     # Save history
     history_path = output_path / "logs" / "lightnet_kd_history.json"
     save_history(history, history_path)
@@ -342,16 +339,16 @@ def main():
     
     # Create data generators
     print("Creating data generators...")
-    datasets = create_data_generators(
+    datagens = create_data_generators(
         splits_file=args.splits_file,
         batch_size=config['data']['batch_size'],
         image_size=tuple(config['data']['image_size']),
         augmentation_config=config['data'].get('augmentation', {})
     )
     
-    train_data = datasets['train']
-    val_data = datasets['val']
-    test_data = datasets['test']
+    train_data = datagens['train']
+    val_data = datagens['val']
+    test_data = datagens['test']
     
     # Load teacher model
     teacher = load_teacher_model(args.teacher_path, config)
@@ -388,11 +385,40 @@ def main():
     # Train distillation model
     history = train_distillation_model(distillation_model, train_data, val_data, config, callbacks)
     
+    # Reload best checkpoint and save the aligned student branch separately for reproducible evals
+    best_ckpt = Path(args.output_dir) / "checkpoints" / "lightnet_kd_best.h5"
+    if best_ckpt.exists():
+        # Align distillation model to best weights and extract the student head for reproducible evals
+        print(f"Loading best KD weights from: {best_ckpt}")
+        distillation_model.load_weights(best_ckpt)
+        # Build a fresh standalone student matching the full LightNetV2 architecture
+        student_best = build_lightnet_v2(
+            input_shape=tuple(config["model"]["input_shape"]),
+            num_classes=config["model"]["num_classes"],
+            dropout_rate=config["model"].get("dropout_rate", 0.3),
+            use_se=config["model"].get("use_se", True),
+            channel_multiplier=config["model"].get("channel_multiplier", 1.0),
+        )
+        # Copy weights from the KD wrapper's student into this standalone model
+        student_best.set_weights(distillation_model.student_model.get_weights())
+        # Evaluate the standalone student on the same test split
+        student_metrics = evaluate_student_on_test(student_best, datagens, model_name="LightNetV2_KD")
+        print("Student Results (from student_best, on test split):")
+        print(f"  Accuracy: {student_metrics.get('accuracy')}")
+        # Save the canonical best student checkpoint
+        best_student_path = Path(args.output_dir) / "checkpoints" / "lightnet_kd_student_best.h5"
+        print(f"Saving best student checkpoint to: {best_student_path}")
+        save_model(student_best, best_student_path)
+        # Note: evaluating lightnet_kd_student_best.h5 via evaluate.py should match this accuracy (up to floating point noise).
+    else:
+        student_metrics = {}
+    
     # Save results
     save_results(distillation_model, history, config, args.output_dir)
     
     # Compare models
-    comparison_results = compare_models(teacher, student, test_data)
+    # Use the student instance tied to the (potentially reloaded) distillation model
+    comparison_results = compare_models(teacher, getattr(distillation_model, "student_model", student), test_data)
     
     # Save comparison results
     comparison_path = Path(args.output_dir) / "reports" / "kd_comparison.json"
@@ -400,6 +426,7 @@ def main():
         json.dump(comparison_results, f, indent=2)
     
     print("Knowledge distillation training completed successfully!")
+    print("Sanity check: KD student test accuracy (train_kd):", student_metrics.get("accuracy"))
 
 
 if __name__ == "__main__":

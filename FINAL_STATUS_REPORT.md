@@ -73,21 +73,15 @@ All required files exist and are valid. The project structure is complete and re
 
 ## 🤖 Model Parameters
 
-**Estimated Parameter Counts** (based on architecture):
+**Exact Parameter Counts** (from `params.py` and KD training logs):
 
-- **LEAD-CNN**: ~1,130,000 parameters
-  - Conv layers: 32, 64, 128, 256, 512 filters
-  - Dense layers: 512, 256 units
-  - Classification: 4 classes
-
-- **LightNet**: ~100,000-113,000 parameters (target: ≤113k)
+- **LEAD-CNN**: 1,970,404 parameters  
+- **LightNetV2 student**: 120,940 parameters  
   - Depthwise-separable convolutions
   - Channels: 32, 64, 128, 256
   - Dense layer: 128 units
   - Classification: 4 classes
-  - **Parameter reduction**: ~90% compared to LEAD-CNN
-
-*Note: Exact counts require dependencies to be installed. Run `python smoke_test.py` after installing dependencies to get precise counts.*
+  - **Parameter reduction**: ~93.9% (1.97M → 120K)
 
 ---
 
@@ -297,8 +291,9 @@ All scripts have proper CLI interfaces with `--help`:
 - Teacher: LEAD-CNN (`outputs/baseline_leadcnn/checkpoints/lead_cnn_best.h5`)
 - Student: Full LightNetV2 (~120,940 params) via `build_lightnet_v2`
 - KD loss: `alpha * KL(T) + gamma * CE` (T=4.0, alpha=0.7, gamma=0.3, beta=0)
-- Results: Teacher acc 0.9388, Student acc 0.8043 (≈85.7% retention)
-- Checkpoints: `outputs/lightnet_v2_kd_final/checkpoints/lightnet_kd_best.h5` (best), `lightnet_kd_final.h5` (final)
+- Results: Teacher acc 0.9388 (top-2 0.9943, params 1,970,404); Student acc 0.8043 (top-2 0.9520, loss 1.3234, params 120,940)
+- Parameter reduction: ~93.9% (1.97M → 120K) with ~85.7% accuracy retention
+- Checkpoints: `outputs/lightnet_v2_kd_final/checkpoints/lightnet_kd_best.h5` (best), `lightnet_kd_final.h5` (final), `lightnet_kd_student_best.h5` (student head for eval)
 
 ---
 

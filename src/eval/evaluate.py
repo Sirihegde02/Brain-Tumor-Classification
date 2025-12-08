@@ -20,11 +20,12 @@ import matplotlib.pyplot as plt
 sys.path.append(str(Path(__file__).parent.parent))
 
 from models.lead_cnn import create_lead_cnn
-from models.lightnet import create_lightnet
+from models.lightnet import create_lightnet, build_lightnet_v2
 from data.transforms import create_data_generators
 from eval.metrics import ClassificationMetrics, evaluate_model, compare_models, create_comparison_table
 from eval.confusion import plot_confusion_matrix, analyze_confusion_matrix, save_confusion_analysis, plot_multiple_confusion_matrices
 from viz.gradcam import generate_gradcam_visualizations
+from eval.utils_eval import evaluate_student_on_test
 
 
 def parse_args():
@@ -50,13 +51,14 @@ def parse_args():
     return parser.parse_args()
 
 
-def load_model(model_path: str, model_type: str = "auto") -> tf.keras.Model:
+def load_model(model_path: str, model_type: str = "auto", config: dict = None) -> tf.keras.Model:
     """
     Load a trained model
     
     Args:
         model_path: Path to model file
         model_type: Type of model ("lead_cnn", "lightnet", "auto")
+        config: Optional config dict for model rebuilds
         
     Returns:
         Loaded Keras model
@@ -68,7 +70,7 @@ def load_model(model_path: str, model_type: str = "auto") -> tf.keras.Model:
         model = keras.models.load_model(model_path)
         print("Loaded as Keras model")
         return model
-    except:
+    except Exception:
         # Try to load as custom model
         try:
             if model_type == "lead_cnn" or "lead" in model_path.lower():
@@ -76,6 +78,24 @@ def load_model(model_path: str, model_type: str = "auto") -> tf.keras.Model:
                 model.load_weights(model_path)
                 return model.model
             elif model_type == "lightnet" or "light" in model_path.lower():
+                # Prefer full LightNetV2 for KD/V2 checkpoints; rebuild from config if available.
+                if "kd_student_best" in os.path.basename(model_path) or "kd" in model_path.lower() or "v2" in model_path.lower():
+                    cfg = config
+                    if cfg is None:
+                        try:
+                            with open("experiments/lightnet_v2_kd_final.yaml", "r") as f:
+                                cfg = yaml.safe_load(f)
+                        except Exception:
+                            cfg = {"model": {"input_shape": [224, 224, 3], "num_classes": 4, "dropout_rate": 0.3, "use_se": True, "channel_multiplier": 1.0}}
+                    model = build_lightnet_v2(
+                        input_shape=tuple(cfg["model"]["input_shape"]),
+                        num_classes=cfg["model"]["num_classes"],
+                        dropout_rate=cfg["model"].get("dropout_rate", 0.3),
+                        use_se=cfg["model"].get("use_se", True),
+                        channel_multiplier=cfg["model"].get("channel_multiplier", 1.0),
+                    )
+                    model.load_weights(model_path)
+                    return model
                 model = create_lightnet()
                 model.load_weights(model_path)
                 return model.model
@@ -182,8 +202,13 @@ def evaluate_multiple_models(model_paths: List[str], model_names: List[str],
             model = load_model(model_path)
             
             # Evaluate model
-            result = evaluate_single_model(model, test_data, model_name, output_dir, class_names)
-            results[model_name] = result
+            if model_name.lower() == "lightnetv2_kd":
+                # Use shared helper for student to mirror train_kd evaluation
+                metrics = evaluate_student_on_test(model, {"test": test_data}, model_name=model_name)
+                results[model_name] = {"metrics": metrics}
+            else:
+                result = evaluate_single_model(model, test_data, model_name, output_dir, class_names)
+                results[model_name] = result
             
         except Exception as e:
             print(f"Error evaluating {model_name}: {e}")

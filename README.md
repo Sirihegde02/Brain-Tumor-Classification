@@ -152,12 +152,12 @@ make report        # Generate final report
 
 ## 📈 Model Performance
 
-| Model                | Params     | Test Acc | Notes                                   |
-|----------------------|-----------:|---------:|-----------------------------------------|
-| LEAD-CNN (teacher)   | ~1.97M     | 0.9388   | `outputs/baseline_leadcnn/*`            |
-| LightNetV2 KD (final)| ~120,940   | 0.8043   | Distilled from LEAD-CNN (retention ~86%)|
+| Model                | Params     | Test Acc | Top-2 | Notes                                        |
+|----------------------|-----------:|---------:|------:|----------------------------------------------|
+| LEAD-CNN (teacher)   | 1,970,404  | 0.9388   | 0.9943| `outputs/baseline_leadcnn/*`                 |
+| LightNetV2 KD (final)| 120,940    | 0.8043   | 0.9520| Distilled from LEAD-CNN (retention ~85.7%)   |
 
-Final KD artifacts: `outputs/lightnet_v2_kd_final/checkpoints/lightnet_kd_best.h5`
+Final KD artifacts: `outputs/lightnet_v2_kd_final/checkpoints/lightnet_kd_best.h5` (KD wrapper) and `lightnet_kd_student_best.h5` (student head, Keras 3)
 
 ## 🔧 Key Features
 
