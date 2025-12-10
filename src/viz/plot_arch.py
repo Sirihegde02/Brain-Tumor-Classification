@@ -4,19 +4,104 @@ Model architecture visualization tools
 Creates diagrams of model architectures including overall model graphs
 and detailed block diagrams for LEAD-CNN and LightNet models.
 """
-import tensorflow as tf
-from tensorflow import keras
+from typing import List, Dict, Any, Optional, Tuple, TYPE_CHECKING
+
+try:
+    import tensorflow as tf
+    from tensorflow import keras
+    TF_AVAILABLE = True
+except ImportError:
+    tf = None
+    keras = None
+    TF_AVAILABLE = False
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-from matplotlib.patches import FancyBboxPatch, ConnectionPatch
+from matplotlib.patches import FancyBboxPatch, ConnectionPatch, FancyArrowPatch
 import numpy as np
-from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 import json
 import argparse
 
+if TYPE_CHECKING:
+    import tensorflow as tf  # type: ignore
+    from tensorflow import keras  # type: ignore
 
-def plot_model_architecture(model: keras.Model, output_path: str,
+
+# Shared palette to keep diagrams visually consistent
+PALETTE = {
+    "ink": "#111827",
+    "ink_light": "#4b5563",
+    "canvas": "#f8fafc",
+    "grid": "#e5e7eb",
+    "input": "#d1d5db",
+    "stem": "#9ac7d8",
+    "pool": "#9ee4c2",
+    "dr": "#f59e0b",
+    "dr_detail": "#fb923c",
+    "gap": "#fca5a5",
+    "dense": "#fef3c7",
+    "output": "#fbcfe8",
+    "callout": "#f3f4f6",
+    "lite_block": "#9ac7d8",
+    "litedr": "#f59e0b",
+    "se": "#c7f9cc",
+}
+
+
+def _add_block(ax, x: float, y: float, width: float, height: float,
+               label: str, color: str, text_color: str = PALETTE["ink"],
+               lw: float = 1.6) -> Tuple[float, float]:
+    """Draw a rounded block and return its center."""
+    rect = FancyBboxPatch(
+        xy=(x, y),
+        width=width,
+        height=height,
+        boxstyle="round,pad=0.08,rounding_size=0.08",
+        facecolor=color,
+        edgecolor=PALETTE["ink"],
+        linewidth=lw,
+    )
+    ax.add_patch(rect)
+    ax.text(
+        x + width / 2,
+        y + height / 2,
+        label,
+        ha="center",
+        va="center",
+        fontsize=10,
+        fontweight="bold",
+        color=text_color,
+    )
+    return x + width / 2, y + height / 2
+
+
+def _add_arrow(ax, start: Tuple[float, float], end: Tuple[float, float],
+               color: str = PALETTE["ink"], style: str = "simple",
+               lw: float = 1.4, mutation: float = 14.0,
+               linestyle: str = "-") -> None:
+    """Add a clean arrow between two points."""
+    arrow = FancyArrowPatch(
+        start,
+        end,
+        arrowstyle=style,
+        mutation_scale=mutation,
+        linewidth=lw,
+        color=color,
+        linestyle=linestyle,
+        shrinkA=0,
+        shrinkB=0,
+    )
+    ax.add_patch(arrow)
+
+
+def _style_axes(fig, ax) -> None:
+    """Apply a subtle background and remove axis clutter."""
+    fig.patch.set_facecolor(PALETTE["canvas"])
+    ax.set_facecolor(PALETTE["canvas"])
+    ax.axis("off")
+
+
+def plot_model_architecture(model: "keras.Model", output_path: str,
                            title: str = "Model Architecture",
                            figsize: Tuple[int, int] = (12, 8)) -> None:
     """
@@ -28,6 +113,11 @@ def plot_model_architecture(model: keras.Model, output_path: str,
         title: Plot title
         figsize: Figure size
     """
+    if not TF_AVAILABLE:
+        print("TensorFlow not available; using manual matplotlib diagram.")
+        plot_model_manual(model, output_path, title, figsize)
+        return
+
     try:
         # Use TensorFlow's built-in plot_model
         tf.keras.utils.plot_model(
@@ -51,7 +141,7 @@ def plot_model_architecture(model: keras.Model, output_path: str,
             plot_model_manual(model, output_path, title, figsize)
 
 
-def plot_model_manual(model: keras.Model, output_path: str,
+def plot_model_manual(model: "keras.Model", output_path: str,
                      title: str = "Model Architecture",
                      figsize: Tuple[int, int] = (12, 8)) -> None:
     """
@@ -117,7 +207,7 @@ def plot_model_manual(model: keras.Model, output_path: str,
     
     print(f"Manual model architecture saved to: {output_path}")
 
-def safe_plot_layers_fallback(model: keras.Model, output_path: str,
+def safe_plot_layers_fallback(model: "keras.Model", output_path: str,
                               title: str = "Model Architecture (Fallback)") -> None:
     """
     Simpler, robust fallback diagram: horizontal bars with layer names on y-axis.
@@ -147,112 +237,125 @@ def plot_lead_cnn_architecture(output_path: str) -> None:
     Args:
         output_path: Output file path
     """
-    # Ensure safe figsize is a tuple and figure gets created
-    plt.figure(figsize=(10, 6))
-    fig, ax = plt.subplots(figsize=(14, 10))
-    
-    # Define blocks and their positions
-    blocks = [
-        {"name": "Input", "pos": (1, 9), "size": (2, 0.8), "color": "lightgray"},
-        {"name": "Conv1\n(32 filters)", "pos": (1, 8), "size": (2, 0.8), "color": "lightblue"},
-        {"name": "MaxPool1", "pos": (1, 7), "size": (2, 0.8), "color": "lightgreen"},
-        {"name": "DR Block 1\n(64 filters)", "pos": (1, 6), "size": (2, 0.8), "color": "orange"},
-        {"name": "DR Block 2\n(128 filters)", "pos": (1, 5), "size": (2, 0.8), "color": "orange"},
-        {"name": "DR Block 3\n(256 filters)", "pos": (1, 4), "size": (2, 0.8), "color": "orange"},
-        {"name": "DR Block 4\n(512 filters)", "pos": (1, 3), "size": (2, 0.8), "color": "orange"},
-        {"name": "Global\nAvg Pool", "pos": (1, 2), "size": (2, 0.8), "color": "lightcoral"},
-        {"name": "Dense\n(512 units)", "pos": (1, 1), "size": (2, 0.8), "color": "lightyellow"},
-        {"name": "Output\n(4 classes)", "pos": (1, 0), "size": (2, 0.8), "color": "lightpink"}
+    fig, ax = plt.subplots(figsize=(14, 9))
+    _style_axes(fig, ax)
+
+    stack_x = 1.2
+    stack_width = 2.6
+    stack_height = 0.9
+    y_start = 8.6
+    y_gap = 1.05
+
+    lead_blocks = [
+        ("Input\n224×224×3", PALETTE["input"]),
+        ("Conv1\n32 filters", PALETTE["stem"]),
+        ("MaxPool1\nstride 2", PALETTE["pool"]),
+        ("DR Block 1\n64 filters", PALETTE["dr"]),
+        ("DR Block 2\n128 filters", PALETTE["dr"]),
+        ("DR Block 3\n256 filters", PALETTE["dr"]),
+        ("DR Block 4\n512 filters", PALETTE["dr"]),
+        ("Global Avg Pool", PALETTE["gap"]),
+        ("Dense\n512 units", PALETTE["dense"]),
+        ("Output\n4 classes", PALETTE["output"]),
     ]
-    
-    # Draw blocks
-    for block in blocks:
-        x, y = block["pos"]
-        width, height = block["size"]
-        rect = FancyBboxPatch(
-            xy=(x, y), width=width, height=height,
-            boxstyle="round,pad=0.1",
-            facecolor=block["color"],
-            edgecolor="black",
-            linewidth=1.5
+
+    centers = []
+    y_cursor = y_start
+    for label, color in lead_blocks:
+        centers.append(_add_block(ax, stack_x, y_cursor, stack_width, stack_height, label, color))
+        y_cursor -= y_gap
+
+    for i in range(len(centers) - 1):
+        _add_arrow(
+            ax,
+            (centers[i][0], centers[i][1] - stack_height / 2 - 0.05),
+            (centers[i + 1][0], centers[i + 1][1] + stack_height / 2 + 0.05),
+            color=PALETTE["ink"],
+            mutation=18,
         )
-        ax.add_patch(rect)
-        
-        # Add text
-        ax.text(x + width/2, y + height/2,
-                block["name"], ha='center', va='center',
-                fontsize=10, fontweight='bold')
-    
-    # Add arrows between blocks
-    for i in range(len(blocks) - 1):
-        start_y = blocks[i]["pos"][1] + blocks[i]["size"][1]
-        end_y = blocks[i + 1]["pos"][1] + blocks[i + 1]["size"][1]
-        
-        arrow = ConnectionPatch(
-            (blocks[i]["pos"][0] + blocks[i]["size"][0]/2, start_y),
-            (blocks[i + 1]["pos"][0] + blocks[i + 1]["size"][0]/2, end_y),
-            "data", "data",
-            arrowstyle="->", shrinkA=5, shrinkB=5,
-            mutation_scale=20, fc="black"
-        )
-        ax.add_patch(arrow)
-    
-    # Add dimension reduction block detail
-    dr_detail_x = 5
-    dr_detail_y = 6
-    
-    # DR Block components
+
+    # Dimension reduction block (callout)
+    dr_x = 5.4
+    dr_y = 5.8
+    dr_width = 1.8
+    dr_height = 0.62
     dr_components = [
-        {"name": "Conv2D", "pos": (dr_detail_x, dr_detail_y + 1), "size": (1.5, 0.6), "color": "lightblue"},
-        {"name": "BatchNorm", "pos": (dr_detail_x, dr_detail_y), "size": (1.5, 0.6), "color": "lightgreen"},
-        {"name": "LeakyReLU", "pos": (dr_detail_x, dr_detail_y - 1), "size": (1.5, 0.6), "color": "orange"},
-        {"name": "Dropout", "pos": (dr_detail_x, dr_detail_y - 2), "size": (1.5, 0.6), "color": "lightcoral"}
+        "Conv2D\n3×3, stride 1",
+        "BatchNorm",
+        "LeakyReLU\nα=0.1",
+        "Dropout\nrate 0.2",
     ]
-    
-    # Draw DR block components
-    for comp in dr_components:
-        x, y = comp["pos"]
-        width, height = comp["size"]
-        rect = FancyBboxPatch(
-            xy=(x, y), width=width, height=height,
-            boxstyle="round,pad=0.05",
-            facecolor=comp["color"],
-            edgecolor="black",
-            linewidth=1
+
+    dr_centers = []
+    for idx, label in enumerate(dr_components):
+        y_pos = dr_y - idx * 0.9
+        dr_centers.append(
+            _add_block(
+                ax,
+                dr_x,
+                y_pos,
+                dr_width,
+                dr_height,
+                label,
+                PALETTE["dr_detail"],
+                lw=1.2,
+            )
         )
-        ax.add_patch(rect)
-        
-        ax.text(x + width/2, y + height/2,
-                comp["name"], ha='center', va='center',
-                fontsize=8, fontweight='bold')
-    
-    # Connect DR block to main architecture
-    dr_arrow = ConnectionPatch(
-        (3, 6.4), (dr_detail_x, dr_detail_y + 1.3),
-        "data", "data",
-        arrowstyle="->", shrinkA=5, shrinkB=5,
-        mutation_scale=15, fc="red", linestyle="--"
+        if idx:
+            _add_arrow(
+                ax,
+                (dr_centers[idx - 1][0], dr_centers[idx - 1][1] - dr_height / 2 - 0.04),
+                (dr_centers[idx][0], dr_centers[idx][1] + dr_height / 2 + 0.04),
+                color=PALETTE["ink_light"],
+                mutation=12,
+            )
+
+    # Connector from main stack to DR detail
+    _add_arrow(
+        ax,
+        (stack_x + stack_width, centers[3][1]),
+        (dr_x - 0.15, dr_centers[0][1] + 0.25),
+        color=PALETTE["dr_detail"],
+        linestyle="--",
+        mutation=14,
     )
-    ax.add_patch(dr_arrow)
-    
-    # Add title and labels
-    ax.set_title("LEAD-CNN Architecture", fontsize=16, fontweight='bold', pad=20)
-    ax.text(2, 9.5, "Input: 224×224×3", ha='center', fontsize=12)
-    ax.text(2, -0.5, "Output: 4 classes", ha='center', fontsize=12)
-    ax.text(dr_detail_x + 0.75, dr_detail_y - 2.5, "Dimension Reduction Block", 
-            ha='center', fontsize=10, fontweight='bold', color='red')
-    
-    # Set plot properties
-    ax.set_xlim(0, 8)
+
+    # Text callouts
+    ax.text(
+        centers[0][0],
+        y_start + 0.85,
+        "Input: 224×224×3",
+        ha="center",
+        fontsize=11,
+        color=PALETTE["ink"],
+    )
+    ax.text(
+        centers[-1][0],
+        centers[-1][1] - 1.1,
+        "Output: 4 classes",
+        ha="center",
+        fontsize=11,
+        color=PALETTE["ink_light"],
+    )
+    ax.text(
+        dr_x + dr_width / 2,
+        dr_y - len(dr_components) * 0.9 - 0.3,
+        "Dimension Reduction Block",
+        ha="center",
+        fontsize=10,
+        fontweight="bold",
+        color=PALETTE["dr_detail"],
+    )
+
+    ax.set_title("LEAD-CNN Architecture", fontsize=18, fontweight="bold", color=PALETTE["ink"])
+    ax.set_xlim(0, 9)
     ax.set_ylim(-1, 10)
-    ax.axis('off')
-    
-    # Save plot
+
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.savefig(output_path, dpi=320, bbox_inches="tight")
     plt.close()
-    
+
     print(f"LEAD-CNN architecture saved to: {output_path}")
 
 
@@ -263,149 +366,155 @@ def plot_lightnet_architecture(output_path: str) -> None:
     Args:
         output_path: Output file path
     """
-    # Ensure safe figsize is a tuple and figure gets created
-    plt.figure(figsize=(10, 6))
-    fig, ax = plt.subplots(figsize=(14, 10))
-    
-    # Define blocks and their positions
-    blocks = [
-        {"name": "Input", "pos": (1, 9), "size": (2, 0.8), "color": "lightgray"},
-        {"name": "Stem\n(32 filters)", "pos": (1, 8), "size": (2, 0.8), "color": "lightblue"},
-        {"name": "LiteDR 1\n(64 filters)", "pos": (1, 7), "size": (2, 0.8), "color": "orange"},
-        {"name": "LiteDR 2\n(128 filters)", "pos": (1, 6), "size": (2, 0.8), "color": "orange"},
-        {"name": "LiteDR 3\n(256 filters)", "pos": (1, 5), "size": (2, 0.8), "color": "orange"},
-        {"name": "LiteDR 4\n(256 filters)", "pos": (1, 4), "size": (2, 0.8), "color": "orange"},
-        {"name": "Global\nAvg Pool", "pos": (1, 3), "size": (2, 0.8), "color": "lightcoral"},
-        {"name": "Dense\n(128 units)", "pos": (1, 2), "size": (2, 0.8), "color": "lightyellow"},
-        {"name": "Output\n(4 classes)", "pos": (1, 1), "size": (2, 0.8), "color": "lightpink"}
+    fig, ax = plt.subplots(figsize=(14, 9))
+    _style_axes(fig, ax)
+
+    stack_x = 1.2
+    stack_width = 2.6
+    stack_height = 0.9
+    y_start = 8.6
+    y_gap = 1.05
+
+    light_blocks = [
+        ("Input\n224×224×3", PALETTE["input"]),
+        ("Stem\n32 filters", PALETTE["stem"]),
+        ("LiteDR 1\n64 filters", PALETTE["dr"]),
+        ("LiteDR 2\n128 filters", PALETTE["dr"]),
+        ("LiteDR 3\n256 filters", PALETTE["dr"]),
+        ("LiteDR 4\n256 filters", PALETTE["dr"]),
+        ("Global Avg Pool", PALETTE["gap"]),
+        ("Dense\n128 units", PALETTE["dense"]),
+        ("Output\n4 classes", PALETTE["output"]),
     ]
-    
-    # Draw blocks
-    for block in blocks:
-        x, y = block["pos"]
-        width, height = block["size"]
-        rect = FancyBboxPatch(
-            xy=(x, y), width=width, height=height,
-            boxstyle="round,pad=0.1",
-            facecolor=block["color"],
-            edgecolor="black",
-            linewidth=1.5
+
+    centers = []
+    y_cursor = y_start
+    for label, color in light_blocks:
+        centers.append(_add_block(ax, stack_x, y_cursor, stack_width, stack_height, label, color))
+        y_cursor -= y_gap
+
+    for i in range(len(centers) - 1):
+        _add_arrow(
+            ax,
+            (centers[i][0], centers[i][1] - stack_height / 2 - 0.05),
+            (centers[i + 1][0], centers[i + 1][1] + stack_height / 2 + 0.05),
+            color=PALETTE["ink"],
+            mutation=18,
         )
-        ax.add_patch(rect)
-        
-        # Add text
-        ax.text(x + width/2, y + height/2,
-                block["name"], ha='center', va='center',
-                fontsize=10, fontweight='bold')
-    
-    # Add arrows between blocks
-    for i in range(len(blocks) - 1):
-        start_y = blocks[i]["pos"][1] + blocks[i]["size"][1]
-        end_y = blocks[i + 1]["pos"][1] + blocks[i + 1]["size"][1]
-        
-        arrow = ConnectionPatch(
-            (blocks[i]["pos"][0] + blocks[i]["size"][0]/2, start_y),
-            (blocks[i + 1]["pos"][0] + blocks[i + 1]["size"][0]/2, end_y),
-            "data", "data",
-            arrowstyle="->", shrinkA=5, shrinkB=5,
-            mutation_scale=20, fc="black"
-        )
-        ax.add_patch(arrow)
-    
-    # Add LiteDR block detail
-    lite_dr_x = 5
-    lite_dr_y = 5
-    
-    # LiteDR Block components
-    lite_dr_components = [
-        {"name": "Depthwise\nConv2D", "pos": (lite_dr_x, lite_dr_y + 1.5), "size": (1.5, 0.6), "color": "lightblue"},
-        {"name": "Pointwise\nConv2D", "pos": (lite_dr_x, lite_dr_y + 0.5), "size": (1.5, 0.6), "color": "lightgreen"},
-        {"name": "BatchNorm", "pos": (lite_dr_x, lite_dr_y - 0.5), "size": (1.5, 0.6), "color": "orange"},
-        {"name": "LeakyReLU", "pos": (lite_dr_x, lite_dr_y - 1.5), "size": (1.5, 0.6), "color": "lightcoral"},
-        {"name": "SE Block", "pos": (lite_dr_x, lite_dr_y - 2.5), "size": (1.5, 0.6), "color": "lightyellow"}
+
+    # LiteDR block detail
+    litedr_x = 5.4
+    litedr_y = 6.4
+    litedr_width = 1.9
+    litedr_height = 0.62
+    litedr_components = [
+        ("Depthwise Conv2D\n3×3", PALETTE["lite_block"]),
+        ("Pointwise Conv2D\n1×1", PALETTE["se"]),
+        ("BatchNorm", PALETTE["dr_detail"]),
+        ("LeakyReLU", PALETTE["gap"]),
+        ("SE Block", PALETTE["dense"]),
     ]
-    
-    # Draw LiteDR block components
-    for comp in lite_dr_components:
-        x, y = comp["pos"]
-        width, height = comp["size"]
-        rect = FancyBboxPatch(
-            xy=(x, y), width=width, height=height,
-            boxstyle="round,pad=0.05",
-            facecolor=comp["color"],
-            edgecolor="black",
-            linewidth=1
-        )
-        ax.add_patch(rect)
-        
-        ax.text(x + width/2, y + height/2,
-                comp["name"], ha='center', va='center',
-                fontsize=8, fontweight='bold')
-    
-    # Connect LiteDR block to main architecture
-    lite_dr_arrow = ConnectionPatch(
-        (3, 5.4), (lite_dr_x, lite_dr_y + 2.1),
-        "data", "data",
-        arrowstyle="->", shrinkA=5, shrinkB=5,
-        mutation_scale=15, fc="red", linestyle="--"
-    )
-    ax.add_patch(lite_dr_arrow)
-    
-    # Add SE block detail
-    se_x = 7
-    se_y = 2
-    
+
+    litedr_centers = []
+    for idx, (label, color) in enumerate(litedr_components):
+        y_pos = litedr_y - idx * 0.9
+        litedr_centers.append(_add_block(ax, litedr_x, y_pos, litedr_width, litedr_height, label, color, lw=1.2))
+        if idx:
+            _add_arrow(
+                ax,
+                (litedr_centers[idx - 1][0], litedr_centers[idx - 1][1] - litedr_height / 2 - 0.04),
+                (litedr_centers[idx][0], litedr_centers[idx][1] + litedr_height / 2 + 0.04),
+                color=PALETTE["ink_light"],
+                mutation=12,
+            )
+
+    # SE block detail
+    se_x = 7.5
+    se_y = 3.4
+    se_width = 1.5
+    se_height = 0.52
     se_components = [
-        {"name": "Global\nAvg Pool", "pos": (se_x, se_y + 1), "size": (1.2, 0.5), "color": "lightblue"},
-        {"name": "Dense\n(ReLU)", "pos": (se_x, se_y), "size": (1.2, 0.5), "color": "lightgreen"},
-        {"name": "Dense\n(Sigmoid)", "pos": (se_x, se_y - 1), "size": (1.2, 0.5), "color": "orange"}
+        ("Global Avg Pool", PALETTE["lite_block"]),
+        ("Dense (ReLU)", PALETTE["se"]),
+        ("Dense (Sigmoid)", PALETTE["dr_detail"]),
     ]
-    
-    for comp in se_components:
-        x, y = comp["pos"]
-        width, height = comp["size"]
-        rect = FancyBboxPatch(
-            xy=(x, y), width=width, height=height,
-            boxstyle="round,pad=0.05",
-            facecolor=comp["color"],
-            edgecolor="black",
-            linewidth=1
-        )
-        ax.add_patch(rect)
-        
-        ax.text(x + width/2, y + height/2,
-                comp["name"], ha='center', va='center',
-                fontsize=7, fontweight='bold')
-    
-    # Connect SE block
-    se_arrow = ConnectionPatch(
-        (lite_dr_x + 1.5, lite_dr_y - 2.2), (se_x, se_y + 1.2),
-        "data", "data",
-        arrowstyle="->", shrinkA=5, shrinkB=5,
-        mutation_scale=15, fc="blue", linestyle="--"
+
+    se_centers = []
+    for idx, (label, color) in enumerate(se_components):
+        y_pos = se_y - idx * 0.8
+        se_centers.append(_add_block(ax, se_x, y_pos, se_width, se_height, label, color, lw=1.1))
+        if idx:
+            _add_arrow(
+                ax,
+                (se_centers[idx - 1][0], se_centers[idx - 1][1] - se_height / 2 - 0.03),
+                (se_centers[idx][0], se_centers[idx][1] + se_height / 2 + 0.03),
+                color=PALETTE["ink_light"],
+                mutation=12,
+            )
+
+    # Connect callouts
+    _add_arrow(
+        ax,
+        (stack_x + stack_width, centers[3][1]),
+        (litedr_x - 0.15, litedr_centers[0][1] + 0.25),
+        color=PALETTE["dr_detail"],
+        linestyle="--",
+        mutation=14,
     )
-    ax.add_patch(se_arrow)
-    
-    # Add title and labels
-    ax.set_title("LightNet Architecture", fontsize=16, fontweight='bold', pad=20)
-    ax.text(2, 9.5, "Input: 224×224×3", ha='center', fontsize=12)
-    ax.text(2, 0.5, "Output: 4 classes", ha='center', fontsize=12)
-    ax.text(lite_dr_x + 0.75, lite_dr_y - 3.2, "LiteDR Block", 
-            ha='center', fontsize=10, fontweight='bold', color='red')
-    ax.text(se_x + 0.6, se_y - 1.8, "SE Block", 
-            ha='center', fontsize=10, fontweight='bold', color='blue')
-    
-    # Set plot properties
-    ax.set_xlim(0, 9)
+    _add_arrow(
+        ax,
+        (litedr_x + litedr_width, litedr_centers[-1][1]),
+        (se_x - 0.1, se_centers[0][1] + 0.15),
+        color=PALETTE["lite_block"],
+        linestyle="--",
+        mutation=14,
+    )
+
+    # Text callouts
+    ax.text(
+        centers[0][0],
+        y_start + 0.85,
+        "Input: 224×224×3",
+        ha="center",
+        fontsize=11,
+        color=PALETTE["ink"],
+    )
+    ax.text(
+        centers[-1][0],
+        centers[-1][1] - 1.1,
+        "Output: 4 classes",
+        ha="center",
+        fontsize=11,
+        color=PALETTE["ink_light"],
+    )
+    ax.text(
+        litedr_x + litedr_width / 2,
+        litedr_y - len(litedr_components) * 0.9 - 0.25,
+        "LiteDR Block",
+        ha="center",
+        fontsize=10,
+        fontweight="bold",
+        color=PALETTE["dr_detail"],
+    )
+    ax.text(
+        se_x + se_width / 2,
+        se_y - len(se_components) * 0.8 - 0.25,
+        "SE Block",
+        ha="center",
+        fontsize=10,
+        fontweight="bold",
+        color=PALETTE["ink_light"],
+    )
+
+    ax.set_title("LightNet Architecture", fontsize=18, fontweight="bold", color=PALETTE["ink"])
+    ax.set_xlim(0, 10)
     ax.set_ylim(0, 10)
-    ax.axis('off')
-    
-    # Save plot
+
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.savefig(output_path, dpi=320, bbox_inches="tight")
     plt.close()
-    
+
     print(f"LightNet architecture saved to: {output_path}")
 
 
@@ -418,39 +527,37 @@ def create_architecture_comparison(output_dir: str) -> None:
     """
     output_path = Path(output_dir) / "figures" / "architecture_comparison.png"
     
-    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
-    
+    fig, axes = plt.subplots(1, 3, figsize=(17, 5))
+    for ax in axes:
+        _style_axes(fig, ax)
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+
     # LEAD-CNN
-    ax1 = axes[0]
-    ax1.set_title("LEAD-CNN", fontsize=14, fontweight='bold')
-    ax1.text(0.5, 0.5, "LEAD-CNN\nArchitecture", ha='center', va='center',
-             fontsize=12, bbox=dict(boxstyle="round,pad=0.3", facecolor="lightblue"))
-    ax1.set_xlim(0, 1)
-    ax1.set_ylim(0, 1)
-    ax1.axis('off')
-    
+    axes[0].set_title("LEAD-CNN", fontsize=13, fontweight="bold", color=PALETTE["ink"])
+    _add_block(axes[0], 0.24, 0.55, 0.52, 0.16, "DR Blocks ×4\n2M params", PALETTE["dr"])
+    _add_block(axes[0], 0.35, 0.25, 0.30, 0.12, "Teacher\nAccuracy ≈0.94", PALETTE["gap"])
+    _add_arrow(axes[0], (0.5, 0.55), (0.5, 0.42), mutation=16)
+
     # LightNet
-    ax2 = axes[1]
-    ax2.set_title("LightNet", fontsize=14, fontweight='bold')
-    ax2.text(0.5, 0.5, "LightNet\nArchitecture", ha='center', va='center',
-             fontsize=12, bbox=dict(boxstyle="round,pad=0.3", facecolor="lightgreen"))
-    ax2.set_xlim(0, 1)
-    ax2.set_ylim(0, 1)
-    ax2.axis('off')
-    
+    axes[1].set_title("LightNet", fontsize=13, fontweight="bold", color=PALETTE["ink"])
+    _add_block(axes[1], 0.24, 0.55, 0.52, 0.16, "LiteDR Blocks ×4\n≈121k params", PALETTE["dr"])
+    _add_block(axes[1], 0.35, 0.25, 0.30, 0.12, "Student\nLightweight", PALETTE["dense"])
+    _add_arrow(axes[1], (0.5, 0.55), (0.5, 0.42), mutation=16)
+
     # Knowledge Distillation
-    ax3 = axes[2]
-    ax3.set_title("Knowledge Distillation", fontsize=14, fontweight='bold')
-    ax3.text(0.5, 0.5, "Teacher → Student\nDistillation", ha='center', va='center',
-             fontsize=12, bbox=dict(boxstyle="round,pad=0.3", facecolor="lightyellow"))
-    ax3.set_xlim(0, 1)
-    ax3.set_ylim(0, 1)
-    ax3.axis('off')
-    
+    axes[2].set_title("Knowledge Distillation", fontsize=13, fontweight="bold", color=PALETTE["ink"])
+    _add_block(axes[2], 0.18, 0.55, 0.28, 0.14, "Teacher\nLEAD-CNN", PALETTE["gap"])
+    _add_block(axes[2], 0.54, 0.55, 0.28, 0.14, "Student\nLightNetV2", PALETTE["dense"])
+    _add_block(axes[2], 0.36, 0.24, 0.30, 0.12, "Hard + Soft Labels", PALETTE["se"])
+    _add_arrow(axes[2], (0.46, 0.62), (0.46, 0.48), mutation=14, color=PALETTE["ink"])
+    _add_arrow(axes[2], (0.54, 0.62), (0.54, 0.48), mutation=14, color=PALETTE["ink"])
+    _add_arrow(axes[2], (0.32, 0.55), (0.48, 0.55), mutation=12, color=PALETTE["dr_detail"], linestyle="--")
+
     plt.tight_layout()
-    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.savefig(output_path, dpi=320, bbox_inches="tight")
     plt.close()
-    
+
     print(f"Architecture comparison saved to: {output_path}")
 
 
