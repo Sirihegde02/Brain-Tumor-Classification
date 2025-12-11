@@ -160,8 +160,8 @@ make report        # Generate final report
 | Model         | Params    | Test Accuracy | F1 (macro) | Cohen kappa | ROC AUC (macro) |
 | ------------- | --------- | ------------- | ---------- | ----------- | --------------- |
 | LEAD-CNN      | 1,970,404 | 0.9388        | 0.9368     | 0.9182      | 0.9931          |
-| LightNet v1   | 221,364   | 0.3295        | –          | –           | –               |
-| LightNetV2 KD | 120,940   | 0.8043        | –          | –           | –               |
+| LightNet v1   | 221,364   | 0.3295        | 0.6907     | 0.6063      | 0.9007          |
+| LightNetV2 KD | 120,940   | 0.8043        | 0.6487     | 0.5575      | 0.8927          |
 
 LightNetV2 KD achieves about 93.9 percent parameter reduction compared to LEAD-CNN (1.97M to about 121k) while retaining roughly 85.7 percent of the baseline accuracy.
 
