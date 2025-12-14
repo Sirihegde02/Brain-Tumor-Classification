@@ -17,6 +17,8 @@ This project implements a brain tumor classification system with the following g
 - **Images**: about 7023 total
 - **Input size**: 224 × 224 RGB
 - **Splits**: Train 65 percent, validation 15 percent, test 20 percent (stratified)
+- **Preprocessing**: Resize to 224×224, scale to [0,1], normalize with ImageNet mean/std
+- **Augmentation (train only)**: Horizontal flip + coarse rotation via `tf.image.rot90` (from a ±10° setting); zoom/brightness disabled in code; no augmentation on val/test
 
 ## 🏗️ Project Structure
 
@@ -173,7 +175,7 @@ LightNetV2 KD achieves about 93.9 percent parameter reduction compared to LEAD-C
 - **LightNetV2 KD (student)**: Distilled student model trained from LEAD-CNN using a combination of hard labels and soft teacher logits.
 
 ### Evaluation
-- **Comprehensive Metrics**: Accuracy, Precision, Recall, F1, Cohen's kappa, ROC-AUC
+- **Comprehensive Metrics**: Accuracy, Precision, Recall, F1, Cohen's kappa, ROC-AUC (KD loss uses α=0.6, γ=0.4, T=4; no feature term)
 - **Visualizations**: Confusion matrices, GradCAM attention maps
 - **Architecture Diagrams**: Model structure visualization
 
@@ -230,9 +232,9 @@ outputs/lightnet_ablation/reports/ablation_study.json
 
 ## 🛠️ Requirements
 
-- **Python**: 3.10–3.11
-- **TensorFlow**: 2.15+ (tested with Apple Metal plugin)
-- **Keras**: 3.x
+- **Python**: 3.10–3.12
+- **TensorFlow**: 2.12+ (Apple Metal supported)
+- **Keras**: 2.12+
 - **scikit-learn**: 1.3+
 - **pandas**: 2.0+
 - **matplotlib**: 3.7+
